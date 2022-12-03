@@ -1,0 +1,28 @@
+{
+  "dataset": {
+    "train": {
+      "path": "Simulations/MatlabSet/train",
+      "is_eval": false,
+      "is_used": true,
+      "dataloader_params": {
+        "batch_size": 1
+      }
+    },
+    "cv": {
+      "path": "Simulations/MatlabSet/cv",
+      "is_eval": false,
+      "is_used": true,
+      "dataloader_params": {
+        "batch_size": 1
+      }
+    },
+    "test": {
+      "path": "Simulations/MatlabSet/test",
+      "is_eval": false,
+      "is_used": true,
+      "dataloader_params": {
+        "batch_size": 1
+      }
+    }
+  }
+}

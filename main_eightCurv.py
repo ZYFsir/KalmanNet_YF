@@ -1,139 +1,25 @@
-from datetime import datetime
-
 import numpy as np
-import torch
-from torch import optim
 import os, sys, argparse, torch, numpy
-from torch.utils.data import Dataset, DataLoader
 
 import matplotlib.pyplot as plt
-import scipy.io as io
+
 from Pipeline_EKF_yf import Pipeline_EKF
 from KalmanNet_nn import KalmanNetNN
 from KalmanNet_sysmdl import SystemModel
 from EKF_test_yf import EKFTest
 
-if torch.cuda.is_available():
-   cuda0 = torch.device("cuda:0")  # you can continue going on here, like cuda:1 cuda:2....etc.
-   torch.set_default_tensor_type('torch.cuda.FloatTensor')
-   print("Running on the GPU")
-else:
-   cuda0 = torch.device("cpu")
-   print("Running on the CPU")
+from utils.torchSettings import get_torch_device, get_config, print_now_time
+from Dataset.dataloader import DataloaderList
+from utils import logger, device, config
 
-print("Pipeline Start")
-################
-### Get Time ###
-################
-today = datetime.today()
-now = datetime.now()
-strToday = today.strftime("%m.%d.%y")
-strNow = now.strftime("%H:%M:%S")
-strTime = strToday + "_" + strNow
-print("Current Time =", strTime)
+print_now_time()
+datasets = DataloaderList()
 
-##################
-### Dataloader ###
-##################
-def init_dataloaders(batch_size=1, num_workers=0):
-   dataset_train = TDOADataset("Simulations/MatlabSet/train", size=-1)
-   dataset_cv = TDOADataset("Simulations/MatlabSet/cv", size=-1)
-   dataset_test = TDOADataset("Simulations/MatlabSet/test", size=-1)
-
-   T_train = dataset_train.length
-   T_cv = dataset_cv.length
-   T_test = dataset_test.length
-
-   print("读取训练集：Size  ", dataset_train.N, "  T  ",dataset_train.length)
-   print("读取验证集：Size  ", dataset_cv.N, "  T  ",dataset_cv.length)
-   print("读取测试集：Size  ", dataset_test.N, "  T  ",dataset_test.length)
-   dataloader_train_params = {
-      'dataset': dataset_train,
-      'batch_size': batch_size,
-      'num_workers': num_workers,
-      'pin_memory': False,
-      'drop_last': False,
-      'shuffle': True,
-      'generator':torch.Generator(device=cuda0)
-   }
-   dataloader_cv_params = {
-      'dataset': dataset_cv,
-      'batch_size': batch_size,
-      'num_workers': num_workers,
-      'pin_memory': False,
-      'drop_last': False,
-      'shuffle': True,
-      'generator': torch.Generator(device=cuda0)
-   }
-   dataloader_test_params = {
-      'dataset': dataset_test,
-      'batch_size': batch_size,
-      'num_workers': num_workers,
-      'pin_memory': False,
-      'drop_last': False,
-      'shuffle': True,
-      'generator': torch.Generator(device=cuda0)
-   }
-   dataloader_train = DataLoader(**dataloader_train_params)
-   dataloader_cv = DataLoader(**dataloader_cv_params)
-   dataloader_test = DataLoader(**dataloader_test_params)
-   # return dataloader_test
-   station = dataset_train[0]['station']
-   z = 10000
-   return dataloader_train, dataloader_cv, dataloader_test, T_train, T_cv, T_test, station, z
-
-def file_filter(f):
-   if f[-4:] in ['.mat']:
-      return True
-   else:
-      return False
-
-class TDOADataset(Dataset):
-   def __init__(self, path, name=None, size=-1):
-      self.name = name
-      self.input = []
-      self.target = []
-      self.station = []
-      self.rmse_cwls = []
-      self.rmse_imm = []
-
-      files = os.listdir(path)
-      files = list(filter(file_filter, files))
-      self.N = len(files) if size < 0 else size
-      for idx in range(0, self.N):
-         data = io.loadmat(os.path.join(path, files[idx]))
-         if not numpy.isnan(data['rmse_imm'][0][0]):
-            self.station.append(torch.tensor(data['test_station'][0].reshape((4, 3)), dtype=torch.float, device=cuda0))
-            self.input.append(torch.tensor(data['test_tdoa'],  dtype=torch.float, device=cuda0))
-            self.target.append(torch.tensor(data['test_data'], dtype=torch.float, device=cuda0))
-
-            self.rmse_cwls.append(torch.tensor(data['rmse_cwls'], dtype=torch.float, device=cuda0))
-            self.rmse_imm.append(torch.tensor(data['rmse_imm'], dtype=torch.float, device=cuda0))
-      self.N = len(self.input)
-
-      self.length = self.input[0].shape[0]
-
-   def __getitem__(self, item):
-      return {'input':self.input[item],
-              'target':self.target[item],
-              'station':self.station[item],
-              'rmse_cwls':self.rmse_cwls[item],
-              'rmse_imm':self.rmse_imm[item],}
-
-   def __len__(self):
-      return self.N
-
-batch_size = 4
-train, cv, test, T_train, T_cv, T_test, station, z = init_dataloaders(batch_size)
-
-##################
-###  SysModel  ###
-##################
 m = 3    # 输入维度
 n = 6    # 输出维度
 
 def init_SystemModel(station, dim, z):
-   z = torch.tensor(z, dtype=torch.float, device=cuda0)
+   z = torch.tensor(z, dtype=torch.float, device=device)
 
    q = 1e4   # 模型噪声
    r = 1e-3    # 测量噪声
