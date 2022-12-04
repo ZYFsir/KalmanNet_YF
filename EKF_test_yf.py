@@ -5,11 +5,8 @@ from EKF_yf import ExtendedKalmanFilter
 import matplotlib.pyplot as plt
 
 def EKFTest(SysModel, dataset, N_T,batch_size, modelKnowledge = 'full', allStates=True):
-
-
     # LOSS
     loss_fn_each = nn.MSELoss(reduction='none')
-    
 
     dataset_size = dataset.sampler.num_samples
     sampler_size = dataset.sampler.num_samples // batch_size

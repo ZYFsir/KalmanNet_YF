@@ -1,5 +1,6 @@
 import torch
 from torch.utils.data import Dataset, DataLoader
+from torch.utils.data.dataset import ConcatDataset
 import os
 import scipy.io as io
 import numpy as np
@@ -20,34 +21,37 @@ class TDOADataset(Dataset):
       self.station = []
       self.rmse_cwls = []
       self.rmse_imm = []
-      self.device = get_torch_device()
+      self.h = [] # 运动平面高度
+      self.device = torch.device("cpu")   # dataloader只能读取cpu中的数据，如果存到GPU，则dataloader读到的是0
       files = os.listdir(path)
       files = list(filter(file_filter, files))
       self.N = len(files) if size < 0 else size
       for idx in range(0, self.N):
          data = io.loadmat(os.path.join(path, files[idx]))
-         if not np.isnan(data['rmse_imm'][0][0]):
-            self.station.append(torch.tensor(data['test_station'][0].reshape((4, 3)), dtype=torch.float, device=self.device))
-            self.input.append(torch.tensor(data['test_tdoa'], dtype=torch.float, device=self.device))
-            self.target.append(torch.tensor(data['test_data'], dtype=torch.float, device=self.device))
-
-            self.rmse_cwls.append(torch.tensor(data['rmse_cwls'], dtype=torch.float, device=self.device))
-            self.rmse_imm.append(torch.tensor(data['rmse_imm'], dtype=torch.float, device=self.device))
+         # if not np.isnan(data['rmse_imm'][0][0]):
+         self.station.append(torch.tensor(data['test_station'][0].reshape((4, 3)), dtype=torch.float, device=self.device))
+         self.input.append(torch.tensor(data['test_tdoa'], dtype=torch.float, device=self.device))
+         self.target.append(torch.tensor(data['test_data'][:,0:2], dtype=torch.float, device=self.device))
+         self.h.append(torch.tensor(data["test_data"][0,2], dtype=torch.float, device=self.device))
+         self.rmse_cwls.append(torch.tensor(data['rmse_cwls'], dtype=torch.float, device=self.device))
+         self.rmse_imm.append(torch.tensor(data['rmse_imm'], dtype=torch.float, device=self.device))
       self.N = len(self.input)
-
       self.length = self.input[0].shape[0]
 
    def __getitem__(self, item):
-      return {'input':self.input[item],
-              'target':self.target[item],
+      return {'z':self.input[item],
+              'x':self.target[item],
               'station':self.station[item],
               'rmse_cwls':self.rmse_cwls[item],
-              'rmse_imm':self.rmse_imm[item],}
+              'rmse_imm':self.rmse_imm[item],
+              'h':self.h[item]}
 
    def __len__(self):
       return self.N
 
-class DataloaderList():
+
+
+class DataloaderList(object):
    def __init__(self):
       self.dataset = self._get_datasets()
 
@@ -58,15 +62,21 @@ class DataloaderList():
             dataloader = MetaDataLoader(dataset_name, dataset_config)
             dataloader_list.append(dataloader)
       return dataloader_list
+   def __getitem__(self, item):
+      return self.dataset[item]
 
 class MetaDataLoader():
    # 增加了meta信息的dataloader
-   def __init__(self, dataset_name, dataset_config):
-      self.name = dataset_name
-      self.path = dataset_config["path"]
-      self.is_eval = dataset_config["is_eval"]
+   def __init__(self):
+      training_set = []
+      training_set_path = []
+      for dataset_name, dataset_config in config["dataset"].items():
+         if dataset_config["is_used"] and dataset_config["is_eval"] == False:
+            training_set.append(TDOADataset(dataset_config["path"], size=-1))
+            training_set_path.append(dataset_config["path"])
+      self.dataset = ConcatDataset(training_set)
       default_dataloader_params = {
-         'dataset': TDOADataset(self.path, size=-1),
+         'dataset': self.dataset,
          'batch_size': 1,
          'num_workers': 1,
          'pin_memory': False,
@@ -74,8 +84,5 @@ class MetaDataLoader():
          'shuffle': True,
          'generator': torch.Generator(device=device)
       }
-      if "dataloader_params" in dataset_config:
-         self.dataloader_params = {**default_dataloader_params, **dataset_config["dataloader_params"]}   # 字典合并，并覆盖参数
-      else:
-         self.dataloader_params = default_dataloader_params
-      self.dataloader = DataLoader(**self.dataloader_params)
+      self.dataloader_params = default_dataloader_params
+

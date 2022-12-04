@@ -11,7 +11,7 @@
     "cv": {
       "path": "Simulations/MatlabSet/cv",
       "is_eval": false,
-      "is_used": true,
+      "is_used": false,
       "dataloader_params": {
         "batch_size": 1
       }
@@ -19,10 +19,20 @@
     "test": {
       "path": "Simulations/MatlabSet/test",
       "is_eval": false,
-      "is_used": true,
+      "is_used": false,
       "dataloader_params": {
         "batch_size": 1
       }
     }
+  },
+  "dim": {
+    "state": 6,
+    "measurement": 3
+  },
+  "Motion model": {
+    "q": 1e4
+  },
+  "Observation model": {
+    "r": 1e-3
   }
 }
