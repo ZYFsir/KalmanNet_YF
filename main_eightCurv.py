@@ -10,28 +10,24 @@ from Dataset.dataloader import MetaDataLoader
 from utils import logger, device, config
 from Filter.SystemModel import init_SingerModel
 from Filter.EKF import ExtendedKalmanFilter
+from UI.analyze import analyze
+
+torch.set_default_dtype(torch.double)
+# torch.set_default_tensor_type(torch.DoubleTensor)
 
 if __name__ == "__main__":
    print_now_time()
    dataloader = DataLoader(**(MetaDataLoader().dataloader_params))
    for data in dataloader:
       singer_model = init_SingerModel(data["station"],data["h"])
-      ekf = ExtendedKalmanFilter(singer_model)
-      x_ekf = ekf.forward(data["z"])
+      ekf = ExtendedKalmanFilter(singer_model, data["x"])
+      x_ekf = ekf.forward(data["z"].cuda()).cpu()
       x_true = data["x"]
       analyze(ekf, x_ekf, x_true)
 
 
 
-   # for train_data in train:
-   #    station = train_data['station']
-   #    input = train_data['input']
-   #    target = train_data['target']
-   singer_model = init_SystemModel(station, dim=2, z=z)
-   m1x_0 = torch.zeros(n, 1)
-   m1x_0[0:3,0] = torch.tensor([13456, 104091, 10000])
-   m2x_0 = 1e6 * torch.eye(n)
-   singer_model.InitSequence(m1x_0, m2x_0)
+
 
    [MSE_EKF_linear_arr_partialoptq, MSE_EKF_linear_avg_partialoptq, MSE_EKF_dB_avg_partialoptq, EKF_out_partialoptq] = EKFTest(singer_model, test, T_test                                                                                                                                             ,batch_size)
    print("ekf finished")

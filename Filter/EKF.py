@@ -14,7 +14,9 @@ class ExtendedKalmanFilter(torch.nn.Module):
     #
     # 定义输入（测量值）为z，维度为m
     # 状态为x，维度为n
-    def __init__(self, SystemModel, mode='full'):
+    def __init__(self, SystemModel, x_true,mode='full'):
+        self.x_true = x_true
+
         self.f = SystemModel.f  # 运动模型
         self.f_batch = vmap(self.f)
         self.m = SystemModel.m  # 输入维度（测量值维度）
@@ -33,7 +35,7 @@ class ExtendedKalmanFilter(torch.nn.Module):
         self.m1x_0 = SystemModel.m1x_0
         self.m1x_posterior = SystemModel.m1x_0
         self.m2x_0 = SystemModel.m2x_0
-        self.inverse_batch = vmap(torch.inverse)
+        self.inverse_batch = vmap(torch.linalg.pinv)
         # Full knowledge about the model or partial? (Should be made more elegant)
         if (mode == 'full'):
             self.fString = 'ModAcc'
@@ -48,15 +50,15 @@ class ExtendedKalmanFilter(torch.nn.Module):
         # Predict the 1-st moment of x
         self.m1x_prior = self.f_batch(self.m1x_posterior)
         # Compute the Jacobians，更新后的雅可比矩阵存到F和H中
-        F = self.jacobianBatch(self.m1x_posterior, self.fString)
-        H = self.jacobianBatch(self.m1x_prior, self.hString)
+        F = self.jacobianBatch(self.m1x_posterior.squeeze(2), self.fString)
+        H = self.jacobianBatch(self.m1x_prior.squeeze(2), self.hString)
         self.UpdateJacobians(F, H)
         # Predict the 2-nd moment of x
         self.m2x_prior = torch.bmm(self.F, self.m2x_posterior)
         self.m2x_prior = torch.bmm(self.m2x_prior, self.F_T) + self.Q
 
         # Predict the 1-st moment of y
-        self.m1y = torch.squeeze(self.h_batch(self.m1x_prior))
+        self.m1y = self.h_batch(self.m1x_prior)
         # Predict the 2-nd moment of y
         self.m2y = torch.bmm(self.H, self.m2x_prior)
         self.m2y = torch.bmm(self.m2y, self.H_T) + self.R
@@ -79,21 +81,23 @@ class ExtendedKalmanFilter(torch.nn.Module):
     # Compute Posterior
     def Correct(self):
         # Compute the 1-st posterior moment
-        self.m1x_posterior = self.m1x_prior + torch.bmm(self.KG, self.dy.unsqueeze(dim=2)).squeeze()
+        self.m1x_posterior = self.m1x_prior + torch.bmm(self.KG, self.dy.unsqueeze(dim=2))
 
         # Compute the 2-nd posterior moment
-        self.m2x_posterior = torch.bmm(self.m2y, torch.transpose(self.KG, 1, 2))
-        self.m2x_posterior = self.m2x_prior - torch.bmm(self.KG, self.m2x_posterior)
-        # self.m2x_posterior = torch.bmm(self.H, self.m2x_prior)
+        # self.m2x_posterior = torch.bmm(self.m2y, torch.transpose(self.KG, 1, 2))
         # self.m2x_posterior = self.m2x_prior - torch.bmm(self.KG, self.m2x_posterior)
+        self.m2x_posterior = torch.bmm(self.H, self.m2x_prior)
+        self.m2x_posterior = self.m2x_prior - torch.bmm(self.KG, self.m2x_posterior)
 
     def Update(self, y):
         self.Predict()      # 预测
         self.m1x_prior_list.append(self.m1x_prior[0,0].cpu())
-
+        print(self.m1x_prior[:,0:2,0] - self.x_true[:,self.i,:].cuda())
         self.KGain()        # 计算KG
         self.Innovation(y)  # 引入测量值
+        print(y - self.m1y)
         self.Correct()      # 更新
+        print(self.m1x_posterior[:, 0:2, 0] - self.x_true[:, self.i, :].cuda())
         self.m1x_posterior_list.append(self.m1x_posterior[0,0].cpu())
 
         return self.m1x_posterior, self.m2x_posterior
@@ -105,39 +109,36 @@ class ExtendedKalmanFilter(torch.nn.Module):
         #########################
 
     def UpdateJacobians(self, F, H):
-        F = F.squeeze()
         self.F = F
         self.F_T = torch.transpose(F, -1, -2)
         self.H = H
         self.H_T = torch.transpose(H, -1, -2)
         # print(self.H,self.F,'\n')
 
+
     ### forward ###
     # 在进行任何
-    def forward(self, y):
+    def forward(self, z):
         # Pre allocate an array for predicted state and variance
         # 生成存储输入的空间
-        (batch_size, T, n) = y.shape
+        (batch_size, T, n) = z.shape
         self.x = torch.empty(size=[batch_size, T, self.m])
         self.sigma = torch.empty(size=[batch_size, T, self.m, self.m])
         self.KG_array = torch.empty((batch_size, T, self.m, self.n))
         self.i = 0  # Index for KG_array alocation
         # squeeze用于维度压缩，将大小仅为1的维度全部删除，用于避免1x1x1当成维度1的这种bug
-        # self.m1x_0 = m1x_0.repeat((batch_size, 1, 1))
-        # self.m2x_0 = m2x_0.repeat((batch_size, 1, 1))
 
+        self.m1x_0 = self.m1x_0.repeat((batch_size, 1, 1))
+        self.m2x_0 = self.m2x_0.repeat((batch_size, 1, 1))
         self.m1x_posterior = self.m1x_0
         self.m2x_posterior = self.m2x_0
-
-
-
         for t in range(0, T):
-            yt = torch.squeeze(y[:, t, :])
-            xt, sigmat = self.Update(yt)    # 新增输入，获得输出
+            zt = torch.squeeze(z[:, t, :])
+            xt, sigmat = self.Update(zt)    # 新增输入，获得输出
+            self.i += 1
             self.x[:, t, :] = torch.squeeze(xt)
             self.sigma[:, t, :, :] = torch.squeeze(sigmat)
-        plt.plot(self.m1x_prior_list)
-        plt.plot(self.m1x_posterior_list)
+        return self.x
 
 
 

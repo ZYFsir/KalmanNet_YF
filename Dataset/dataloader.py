@@ -27,14 +27,14 @@ class TDOADataset(Dataset):
       files = list(filter(file_filter, files))
       self.N = len(files) if size < 0 else size
       for idx in range(0, self.N):
-         data = io.loadmat(os.path.join(path, files[idx]))
+         data = io.loadmat(os.path.join(path, files[idx]), mat_dtype=True)
          # if not np.isnan(data['rmse_imm'][0][0]):
-         self.station.append(torch.tensor(data['test_station'][0].reshape((4, 3)), dtype=torch.float, device=self.device))
-         self.input.append(torch.tensor(data['test_tdoa'], dtype=torch.float, device=self.device))
-         self.target.append(torch.tensor(data['test_data'][:,0:2], dtype=torch.float, device=self.device))
-         self.h.append(torch.tensor(data["test_data"][0,2], dtype=torch.float, device=self.device))
-         self.rmse_cwls.append(torch.tensor(data['rmse_cwls'], dtype=torch.float, device=self.device))
-         self.rmse_imm.append(torch.tensor(data['rmse_imm'], dtype=torch.float, device=self.device))
+         self.station.append(torch.tensor(data['test_station'][0].reshape((4, 3)), dtype=torch.double, device=self.device))
+         self.input.append(torch.tensor(data['test_tdoa'], dtype=torch.double, device=self.device))
+         self.target.append(torch.tensor(data['test_data'][:,0:2], dtype=torch.double, device=self.device))
+         self.h.append(torch.tensor(data["test_data"][0,2], dtype=torch.double, device=self.device))
+         self.rmse_cwls.append(torch.tensor(data['rmse_cwls'], dtype=torch.double, device=self.device))
+         self.rmse_imm.append(torch.tensor(data['rmse_imm'], dtype=torch.double, device=self.device))
       self.N = len(self.input)
       self.length = self.input[0].shape[0]
 
@@ -81,7 +81,7 @@ class MetaDataLoader():
          'num_workers': 1,
          'pin_memory': False,
          'drop_last': False,
-         'shuffle': True,
+         'shuffle': False,
          'generator': torch.Generator(device=device)
       }
       self.dataloader_params = default_dataloader_params

@@ -30,9 +30,9 @@
     "measurement": 3
   },
   "Motion model": {
-    "q": 1e4
+    "q": 1e-3
   },
   "Observation model": {
-    "r": 1e-3
+    "r": 1e-8
   }
 }
