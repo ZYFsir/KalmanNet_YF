@@ -34,5 +34,7 @@
   },
   "Observation model": {
     "r": 0.1
-  }
+  },
+  "in_mult":5,
+  "out_mult": 40
 }

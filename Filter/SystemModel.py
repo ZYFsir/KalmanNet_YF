@@ -223,8 +223,7 @@ def init_SingerModel(station, height):
         return torch.matmul(F, x)
 
     def h(x):
-        x = x.squeeze()
-        u = torch.hstack((x[0:2], height))
+        u = torch.hstack((x[0:2,0], height))
         r = torch.norm(u - station, dim=2)
         tdoa = r[0,1:] - r[0,0]
         return tdoa

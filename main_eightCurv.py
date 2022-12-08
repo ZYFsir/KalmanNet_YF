@@ -13,7 +13,6 @@ from Filter.EKF import ExtendedKalmanFilter
 from UI.analyze import analyze
 
 torch.set_default_dtype(torch.double)
-# torch.set_default_tensor_type(torch.DoubleTensor)
 
 if __name__ == "__main__":
    torch.set_printoptions(precision=12)

@@ -51,8 +51,8 @@ class ExtendedKalmanFilter(torch.nn.Module):
         # Predict the 1-st moment of x
         self.m1x_prior = self.f_batch(self.m1x_posterior)
         # Compute the Jacobians，更新后的雅可比矩阵存到F和H中
-        F = self.jacobianBatch(self.m1x_posterior.squeeze(2), self.fString)
-        H = self.jacobianBatch(self.m1x_prior.squeeze(2), self.hString)
+        F = self.jacobianBatch(self.m1x_posterior, self.fString)
+        H = self.jacobianBatch(self.m1x_prior, self.hString)
         self.UpdateJacobians(F, H)
         # Predict the 2-nd moment of x
         self.m2x_prior = torch.bmm(self.F, self.m2x_posterior)
@@ -63,7 +63,6 @@ class ExtendedKalmanFilter(torch.nn.Module):
         # Predict the 2-nd moment of y
         tmp = torch.bmm(self.H, self.m2x_prior)
         self.m2y = torch.bmm(tmp, self.H_T) + self.R
-        print("hh")
 
     # Compute the Kalman Gain
     def KGain(self):
@@ -74,7 +73,6 @@ class ExtendedKalmanFilter(torch.nn.Module):
 
         # batch_div = vmap(torch.div)
         # self.KG = batch_div(P12, self.m2y)
-        print("hh")
         # Save KalmanGain
         # self.KG_array[:,self.i,:,:] = self.KG
         # self.i += 1
@@ -97,14 +95,10 @@ class ExtendedKalmanFilter(torch.nn.Module):
     def Update(self, y):
         self.Predict()      # 预测
         self.m1x_prior_list.append(self.m1x_prior[0,0].cpu())
-        print(self.m1x_prior[:,0:2,0] - self.x_true[:,self.i,:].cuda())
         self.KGain()        # 计算KG
         self.Innovation(y)  # 引入测量值
-        print(y - self.m1y)
         self.Correct()      # 更新
-        print(self.m1x_posterior[:, 0:2, 0] - self.x_true[:, self.i, :].cuda())
         self.m1x_posterior_list.append(self.m1x_posterior[0,0].cpu())
-
         return self.m1x_posterior, self.m2x_posterior
 
     def InitSequence(self, m1x_0, m2x_0):
@@ -118,15 +112,12 @@ class ExtendedKalmanFilter(torch.nn.Module):
         self.F_T = torch.transpose(F, -1, -2)
         self.H = H
         self.H_T = torch.transpose(H, -1, -2)
-        # print(self.H,self.F,'\n')
 
-
-    ### forward ###
-    # 在进行任何
     def forward(self, z):
         # Pre allocate an array for predicted state and variance
         # 生成存储输入的空间
         (batch_size, T, n) = z.shape
+        self.batch_size = batch_size
         self.x = torch.empty(size=[batch_size, T, self.m])
         self.sigma = torch.empty(size=[batch_size, T, self.m, self.m])
         self.KG_array = torch.empty((batch_size, T, self.m, self.n))
@@ -150,19 +141,23 @@ class ExtendedKalmanFilter(torch.nn.Module):
     def jacobianBatch(self, x, a):
         if (a == 'ObsAcc'):
             g = self.h
+            f_out = self.n
+            f_in = self.m
         elif (a == 'ModAcc'):
             g = self.f
+            f_out = self.m
+            f_in = self.m
         elif (a == 'ObsInacc'):
-            g = self.hInacc
+            f_out = self.n
+            f_in = self.m
         elif (a == 'ModInacc'):
             g = self.fInacc
-        # return vmap(jacrev(g))(x)
-        return self.jaccsd(g, x)
-        # y = torch.reshape((x.T), [x.size()[1]])
-        # Jac = autograd.functional.jacobian(g, y)
-        # Jac = Jac.view(-1, self.m)
-        # Jac = Jac.unsqueeze(0)
-        # return Jac
+            f_out = self.m
+            f_in = self.m
+        jac=vmap(jacrev(g))(x)
+        jac_reshape = jac.reshape([self.batch_size, f_out, f_in])
+        return jac_reshape
+
 
     def jaccsd(self, fun, x):
         x = x.squeeze()
