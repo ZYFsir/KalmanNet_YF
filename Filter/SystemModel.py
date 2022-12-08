@@ -207,11 +207,11 @@ def init_SingerModel(station, height):
     r = config["Observation model"]["r"]  # 测量噪声
 
     I = torch.eye(2, dtype=torch.double, device=device)
-    alpha = 1e7
-    tao = 0.5
-    sigma_a = 1e-7
-    R_corr = 0.1
-    x_p = 1e-2
+    alpha = 0.1
+    tao = 1
+    sigma_a = 100
+    R_corr = 0.5
+    x_p = 1e6
     def f(x):
         F1 = torch.hstack((I, tao * I, (alpha * tao - 1 + np.exp(-alpha * tao)) / (alpha ** 2) * I))
         # F1[2,:] = torch.tensor([0,0,1,0,0,0,0,0,0])
@@ -226,10 +226,10 @@ def init_SingerModel(station, height):
         x = x.squeeze()
         u = torch.hstack((x[0:2], height))
         r = torch.norm(u - station, dim=2)
-        tdoa = torch.abs(r[0,1:] - r[0,0])
+        tdoa = r[0,1:] - r[0,0]
         return tdoa
 
-    alpha_tao = alpha * tao
+    alpha_tao = 0.05
     q11 = (sigma_a ** 2) / (alpha ** 4) * (1 - exp(
         -2 * alpha_tao) + 2 * alpha_tao + 2 / 3 * alpha_tao ** 3 - 2 * alpha_tao ** 2 - 4 * alpha_tao * exp(-alpha_tao))
     q12 = (sigma_a ** 2) / (alpha ** 3) * (exp(-2 * alpha_tao) + 1 - 2 * exp(-alpha_tao) + 2 * alpha_tao * exp(
@@ -246,5 +246,5 @@ def init_SingerModel(station, height):
     R_true =  R_corr * (r ** 2) * (torch.ones(n) -torch.eye(n)+ torch.eye(n) /R_corr)
     model = SystemModel(f, Q_true, h, R_true)
 
-    model.InitSequence(torch.tensor([[1e4,1e5,0,0,0,0]]).T, x_p*torch.eye(m))
+    model.InitSequence(torch.tensor([[1e4,1e5,0,0,0,0]]).T, x_p*torch.ones([m,m]))
     return model

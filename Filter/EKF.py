@@ -15,6 +15,7 @@ class ExtendedKalmanFilter(torch.nn.Module):
     # 定义输入（测量值）为z，维度为m
     # 状态为x，维度为n
     def __init__(self, SystemModel, x_true,mode='full'):
+        super().__init__()
         self.x_true = x_true
 
         self.f = SystemModel.f  # 运动模型
@@ -35,7 +36,7 @@ class ExtendedKalmanFilter(torch.nn.Module):
         self.m1x_0 = SystemModel.m1x_0
         self.m1x_posterior = SystemModel.m1x_0
         self.m2x_0 = SystemModel.m2x_0
-        self.inverse_batch = vmap(torch.linalg.pinv)
+        self.inverse_batch = vmap(torch.linalg.inv)
         # Full knowledge about the model or partial? (Should be made more elegant)
         if (mode == 'full'):
             self.fString = 'ModAcc'
@@ -60,16 +61,20 @@ class ExtendedKalmanFilter(torch.nn.Module):
         # Predict the 1-st moment of y
         self.m1y = self.h_batch(self.m1x_prior)
         # Predict the 2-nd moment of y
-        self.m2y = torch.bmm(self.H, self.m2x_prior)
-        self.m2y = torch.bmm(self.m2y, self.H_T) + self.R
+        tmp = torch.bmm(self.H, self.m2x_prior)
+        self.m2y = torch.bmm(tmp, self.H_T) + self.R
+        print("hh")
 
     # Compute the Kalman Gain
     def KGain(self):
         # self.m2x_prior是状态x的协方差矩阵，H_T是测量矩阵的转置
         # self.m2y是测量值的协方差矩阵
-        self.KG = torch.bmm(self.m2x_prior, self.H_T)
-        self.KG = torch.bmm(self.KG, self.inverse_batch(self.m2y))
+        P12 = torch.bmm(self.m2x_prior, self.H_T)
+        self.KG = torch.bmm(P12, self.inverse_batch(self.m2y))
 
+        # batch_div = vmap(torch.div)
+        # self.KG = batch_div(P12, self.m2y)
+        print("hh")
         # Save KalmanGain
         # self.KG_array[:,self.i,:,:] = self.KG
         # self.i += 1
@@ -86,8 +91,8 @@ class ExtendedKalmanFilter(torch.nn.Module):
         # Compute the 2-nd posterior moment
         # self.m2x_posterior = torch.bmm(self.m2y, torch.transpose(self.KG, 1, 2))
         # self.m2x_posterior = self.m2x_prior - torch.bmm(self.KG, self.m2x_posterior)
-        self.m2x_posterior = torch.bmm(self.H, self.m2x_prior)
-        self.m2x_posterior = self.m2x_prior - torch.bmm(self.KG, self.m2x_posterior)
+        HP = torch.bmm(self.H, self.m2x_prior)
+        self.m2x_posterior = self.m2x_prior - torch.bmm(self.KG, HP)
 
     def Update(self, y):
         self.Predict()      # 预测
@@ -151,7 +156,27 @@ class ExtendedKalmanFilter(torch.nn.Module):
             g = self.hInacc
         elif (a == 'ModInacc'):
             g = self.fInacc
-        return vmap(jacrev(g))(x)
+        # return vmap(jacrev(g))(x)
+        return self.jaccsd(g, x)
+        # y = torch.reshape((x.T), [x.size()[1]])
+        # Jac = autograd.functional.jacobian(g, y)
+        # Jac = Jac.view(-1, self.m)
+        # Jac = Jac.unsqueeze(0)
+        # return Jac
+
+    def jaccsd(self, fun, x):
+        x = x.squeeze()
+        z = fun(x)
+        n = x.size()[0]
+        m = z.size()[0]
+        A = torch.zeros([m,n])
+        h = x*0 + 1e-5
+        x1 = torch.zeros(n)
+        for k in range(0,n):
+            x1.copy_(x)
+            x1[k]+=h[k]
+            A[:,k] = (fun(x1)-z)/h[k]
+        return A.unsqueeze(0)
 
     def getJacobian(self, x, a):
         # if(x.size()[1] == 1):

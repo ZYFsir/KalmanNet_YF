@@ -33,6 +33,6 @@
     "q": 1e-3
   },
   "Observation model": {
-    "r": 1e-8
+    "r": 0.1
   }
 }

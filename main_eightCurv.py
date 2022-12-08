@@ -16,6 +16,7 @@ torch.set_default_dtype(torch.double)
 # torch.set_default_tensor_type(torch.DoubleTensor)
 
 if __name__ == "__main__":
+   torch.set_printoptions(precision=12)
    print_now_time()
    dataloader = DataLoader(**(MetaDataLoader().dataloader_params))
    for data in dataloader:
@@ -29,12 +30,12 @@ if __name__ == "__main__":
 
 
 
-   [MSE_EKF_linear_arr_partialoptq, MSE_EKF_linear_avg_partialoptq, MSE_EKF_dB_avg_partialoptq, EKF_out_partialoptq] = EKFTest(singer_model, test, T_test                                                                                                                                             ,batch_size)
-   print("ekf finished")
-
-   # plt.plot(MSE_EKF_linear_arr_partialoptq.reshape([-1,1]).cpu())
-   plt.legend(["先验结果", "后验估计结果"])
-   plt.show()
+   # [MSE_EKF_linear_arr_partialoptq, MSE_EKF_linear_avg_partialoptq, MSE_EKF_dB_avg_partialoptq, EKF_out_partialoptq] = EKFTest(singer_model, test, T_test                                                                                                                                             ,batch_size)
+   # print("ekf finished")
+   #
+   # # plt.plot(MSE_EKF_linear_arr_partialoptq.reshape([-1,1]).cpu())
+   # plt.legend(["先验结果", "后验估计结果"])
+   # plt.show()
 
 
    # modelFolder = 'KNet' + '/'
