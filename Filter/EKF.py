@@ -14,9 +14,8 @@ class ExtendedKalmanFilter(torch.nn.Module):
     #
     # 定义输入（测量值）为z，维度为m
     # 状态为x，维度为n
-    def __init__(self, SystemModel, x_true,mode='full'):
+    def __init__(self, SystemModel,mode='full'):
         super().__init__()
-        self.x_true = x_true
 
         self.f = SystemModel.f  # 运动模型
         self.f_batch = vmap(self.f)
@@ -102,8 +101,8 @@ class ExtendedKalmanFilter(torch.nn.Module):
         return self.m1x_posterior, self.m2x_posterior
 
     def InitSequence(self, m1x_0, m2x_0):
-        self.m1x_0 = m1x_0
-        self.m2x_0 = m2x_0
+        self.m1x_0 = m1x_0.cuda()
+        self.m2x_0 = m2x_0.cuda()
 
         #########################
 

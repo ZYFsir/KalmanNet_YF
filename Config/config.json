@@ -3,8 +3,9 @@
     "train": {
       "path": "Simulations/MatlabSet/train",
       "is_eval": false,
-      "is_used": true,
+      "is_used": false,
       "dataloader_params": {
+        "num_workers": 0,
         "batch_size": 1
       }
     },
@@ -21,6 +22,16 @@
       "is_eval": false,
       "is_used": false,
       "dataloader_params": {
+        "num_workers": 0,
+        "batch_size": 1
+      }
+    },
+    "train_forDEBUG": {
+      "path": "Simulations/MatlabSet/train_forDebug",
+      "is_eval": false,
+      "is_used": true,
+      "dataloader_params": {
+        "num_workers": 0,
         "batch_size": 1
       }
     }

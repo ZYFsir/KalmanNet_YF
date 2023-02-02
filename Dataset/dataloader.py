@@ -78,7 +78,7 @@ class MetaDataLoader():
       default_dataloader_params = {
          'dataset': self.dataset,
          'batch_size': 1,
-         'num_workers': 1,
+         'num_workers': 0,
          'pin_memory': False,
          'drop_last': False,
          'shuffle': False,
