@@ -1,79 +1,71 @@
 import numpy as np
-import os, sys, argparse, torch, numpy
+import os
+import sys
+import argparse
+import torch
+import numpy
 
 import matplotlib.pyplot as plt
 from torch import nn
 from torch.utils.data import Dataset, DataLoader
 
 from utils.torchSettings import get_torch_device, get_config, print_now_time
-from Dataset.dataloader import MetaDataLoader
-from utils import logger, device, config
+from Dataset.TDOADataset import TDOADataset
+from utils.Exp import Exp
 
 from Filter.EKF import ExtendedKalmanFilter
 from Filter.singer_EKF import init_SingerModel
 from Filter.KalmanNet import KalmanNet
 from UI.analyze import analyze
 
-torch.set_default_dtype(torch.double)
 
+torch.set_default_dtype(torch.float32)
+torch.set_printoptions(precision=12)
 
 if __name__ == "__main__":
-   torch.set_printoptions(precision=12)
-   print_now_time()
-   dataloader = DataLoader(**(MetaDataLoader().dataloader_params))
+    print_now_time()
 
-   ## using KalmanNet
-   ekf = KalmanNet()
-   optimizer = torch.optim.Adam(ekf.parameters(), lr=1e-3)
-   loss_fn = nn.MSELoss()
-   epoch = 2
-   not_init_model = True
-   ekf.train()
+    experiment = Exp()
+    experiment.run(mode="train", dataset_name="train")
 
-   MSE_epoch = []
-   for epoch_i in range(epoch):
-      print("****** epoch",epoch_i," *********")
-      MSE_testset_singledata = []
-      MSE_dB_testset_singledata = []
-      for data in dataloader:
-         if not_init_model:
-            singer_model = init_SingerModel(data["station"], data["h"])
-            not_init_model = False
-            ekf.set_ssmodel(singer_model)
-         ## using EKF
-         # ekf = ExtendedKalmanFilter(singer_model)
+    #     if epoch_i % 2 == 0:
+    #         # 计算当前的模型数量
+    #         checkpoint_count = 0
+    #         files = os.listdir("./")
+    #         checkpoint_files = [x for x in files if "KalmanNet.pt" in x]
+    #         checkpoint_files = sorted(
+    #             checkpoint_files, key=lambda x: float(x.split("_")[0]))
+    #         checkpoint_count = len(checkpoint_files)
 
-         ekf.init_hidden()
-         (batch_size, T, n) = data["z"].shape
-         ekf.model.InitSequence(singer_model.m1x_0, T)
-
-         m = config["dim"]["state"]
-         n = config["dim"]["measurement"]
-
-         x_ekf = torch.empty([batch_size, T, m])
-
-         x_true = data["x"].cuda()
-         z = data["z"].cuda()
-         for t in range(0, T):
-            m1x_posterior = ekf.forward(z[:,t,:])
-            x_ekf[:, t, :] = m1x_posterior.squeeze(2)
-
-         ## training KalmanNet
-         loss = loss_fn(x_true, x_ekf[:, :, 0:2])
-
-         MSE_testset_singledata.append(torch.mean(loss))
-         MSE_dB_testset_singledata.append(10 * torch.log10(torch.mean(loss)))
-         print("MSE:", torch.mean(loss).item())
-         print("MSE(dB):", 10 * torch.log10(torch.mean(loss)).item())
-
-         optimizer.zero_grad()
-         loss.backward()
-         optimizer.step()
-      MSE_testset_mean = torch.mean(torch.Tensor(MSE_testset_singledata))
-      MSE_dB_testset_mean = torch.mean(torch.Tensor(MSE_dB_testset_singledata))
-      print("current epoch MSE:", MSE_testset_mean)
-      print("current epoch MSE(dB):", MSE_dB_testset_mean)
-   torch.save(ekf.state_dict(), "testmodel.pkl")
-   #analyze(ekf, x_ekf.detach(), x_true)
-
-
+    #         # 清除过多保存的模型
+    #         if checkpoint_count > max_checkpoint_num:
+    #             for i in range(0, checkpoint_count - max_checkpoint_num):
+    #                 remove_checkpoint_name = "./"+checkpoint_files[-i-1]
+    #                 if (os.path.exists(remove_checkpoint_name)):
+    #                     os.remove(remove_checkpoint_name)
+    #                 else:
+    #                     print("要删除的文件不存在！")
+    #         torch.save({
+    #             'epoch': epoch_i,
+    #             'model_state_dict': ekf.state_dict(),
+    #             'optimizer_state_dict': optimizer.state_dict(),
+    #             'MSE': MSE_testset_mean[epoch_i],
+    #             'MSE(dB)': MSE_dB_testset_mean[epoch_i],
+    #         }, f"{MSE_dB_testset_mean[epoch_i]}_dB_epoch{epoch_i}_KalmanNet.pt")
+    #     # elif MSE_testset_mean[epoch_i] >= 6*torch.min(MSE_testset_mean[0:epoch_i+1]):
+    #     #     logger.warning(f"Begin Rewind!")
+    #     #     files = os.listdir("./")
+    #     #     checkpoint_files = [x for x in files if "KalmanNet.pt" in x]
+    #     #     checkpoint_files = sorted(
+    #     #         checkpoint_files, key=lambda x: float(x.split("_")[0]))
+    #     #     checkpoint_rewind = torch.load(checkpoint_files[0])
+    #     #     epoch_i = checkpoint_rewind["epoch"]
+    #     #     ekf.load_state_dict(checkpoint_rewind["model_state_dict"])
+    #     #     # optimizer.load_state_dict(checkpoint_rewind["optimizer_state_dict"])
+    #     epoch_i += 1
+    # # 绘制训练曲线
+    # plt.switch_backend('agg')
+    # plt.plot(MSE_dB_testset_mean.detach().cpu())
+    # plt.savefig("./Result/training_curve.png")
+    # torch.save(ekf.state_dict(), "testmodel.pkl")
+    #analyze(ekf, x_ekf.detach(), x_true)
