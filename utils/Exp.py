@@ -132,50 +132,11 @@ class Exp:
 
         iter_num = self.dataset_size_dict[dataset_name]//self.batch_size
         MSE_per_epoch = torch.empty([self.epoch])
-        MSE_per_batch = torch.empty([iter_num])
+
         while epoch_i < epoch:
             print(f"******* epoch {epoch_i} *********")
-            for data_i, data in enumerate(self.dataloader_dict[dataset_name]):
-                if data_i == 0 and self.model_name=="KNet":
-                    singer_model = init_SingerModel(
-                        data["station"], data["h"], self.m, self.n, self.config["Observation model"]["r"], self.device)
-                    self.model.set_ssmodel(singer_model)
-
-                # 基本变量读取
-                (batch_size, T, n) = data["z"].shape
-                self.model.batch_size = batch_size
-                x_ekf = torch.empty([batch_size, T, self.m])
-                x_true = data["x"].cuda()
-                z = data["z"].cuda()
-                if self.model_name=="KNet":
-                    self.model.init_hidden()
-                    self.model.InitSequence()
-                    for t in range(0, T):
-                        m1x_posterior = self.model.forward(z[:, t, :])
-                        x_ekf[:, t, :] = m1x_posterior.squeeze(2)
-                elif self.model_name=="EKF":
-                    ekf.InitSequence(singer_model.m1x_0, singer_model.m2x_0)
-                    x_ekf = ekf.forward(z)
-                # 求loss
-                loss_elements_in_iter = self.loss_fn(x_true, x_ekf[:, :, 0:2])
-                loss_trajs_in_iter = torch.mean(
-                    loss_elements_in_iter, dim=(1, 2))
-                loss_batch_in_iter = torch.mean(loss_trajs_in_iter)
-
-                # 记录结果
-                MSE_per_batch[data_i] = loss_batch_in_iter.item()
-                # MSE_dB_trainset_singledata[data_i] = 10 * \
-                #     torch.log10(torch.mean(loss_element)).item()
-                # print(
-                #     f"{data_i+1}/{iter_num} MSE:{MSE_per_batch[data_i]}")
-                # print(
-                #     f"{data_i+1}/{iter_num} MSE(dB):{10*torch.log10(MSE_per_batch[data_i])}")
-                if mode == "train":
-                    self.optimizer.zero_grad()
-                    loss_batch_in_iter.backward()
-                    self.optimizer.step()
-                    # self.scheduler.step(loss_batch_in_iter)
-                    self.scheduler.step()
+            # 一次训练
+            MSE_per_batch = self.run_one_epoch(mode="train", dataset_name="train")
             total_loss = torch.mean(MSE_per_batch)
             MSE_per_epoch[epoch_i] = total_loss
             # 记录结果
@@ -184,32 +145,90 @@ class Exp:
                 f"MSE_{dataset_name}": MSE_per_epoch[epoch_i],
                 "MSE_dB_{dataset_name}": 10*torch.log10(MSE_per_epoch[epoch_i]),
             }, epoch=epoch_i)
+
             # 保存模型
             if mode == "train":
                 if epoch_i % 5 == 0:
-                    # 计算当前的模型数量
-                    checkpoint_count = 0
-                    files = os.listdir(
-                        self.config["checkpoints_saving_folder"])
-                    checkpoint_files = [
-                        x for x in files if "KalmanNet.pt" in x]
-                    checkpoint_files = sorted(
-                        checkpoint_files, key=lambda x: float(x.split("_")[0]))
-                    checkpoint_count = len(checkpoint_files)
-                    # 清除过多保存的模型
-                    if checkpoint_count > self.config["max_checkpoint_num"]:
-                        for i in range(0, checkpoint_count - self.config["max_checkpoint_num"]):
-                            remove_checkpoint_name = os.path.join(self.config["checkpoints_saving_folder"], checkpoint_files[-1])
-                            if os.path.exists(remove_checkpoint_name):
-                                os.remove(remove_checkpoint_name)
-                            else:
-                                print("要删除的文件不存在！")
-                    print("准备保存模型")
-                    torch.save({
+                    MSE_test = self.run_one_epoch(mode="test", dataset_name="test")
+                    loss_test = torch.mean(MSE_test)
+                    checkpoint_name = os.path.join(self.config["checkpoints_saving_folder"],
+                        f"{MSE_per_epoch[epoch_i]}_dB_epoch{epoch_i}_KalmanNet.pt")
+                    checkpoint_content = {
                         'epoch': epoch_i,
                         'model_state_dict': self.model.state_dict(),
                         'optimizer_state_dict': self.optimizer.state_dict(),
                         'MSE': MSE_per_epoch[epoch_i],
-                        'MSE(dB)': 10*torch.log10(MSE_per_epoch[epoch_i]),
-                    }, os.path.join(self.config["checkpoints_saving_folder"],f"{MSE_per_epoch[epoch_i]}_dB_epoch{epoch_i}_KalmanNet.pt"))
+                        'MSE_test': loss_test,
+                    }
+                    self.save_checkpoints(name=checkpoint_name, content=checkpoint_content)
             epoch_i += 1
+
+    def run_one_epoch(self, mode="test", dataset_name="test"):
+        iter_num = self.dataset_size_dict[dataset_name] // self.batch_size
+        MSE_per_batch = torch.empty([iter_num])
+        for data_i, data in enumerate(self.dataloader_dict[dataset_name]):
+            if data_i == 0 and self.model_name == "KNet":
+                singer_model = init_SingerModel(
+                    data["station"], data["h"], self.m, self.n, self.config["Observation model"]["r"], self.device)
+                self.model.set_ssmodel(singer_model)
+
+            # 基本变量读取
+            (batch_size, T, n) = data["z"].shape
+            self.model.batch_size = batch_size
+            x_ekf = torch.empty([batch_size, T, self.m])
+            x_true = data["x"].cuda()
+            z = data["z"].cuda()
+            if self.model_name == "KNet":
+                self.model.init_hidden()
+                self.model.InitSequence()
+                for t in range(0, T):
+                    m1x_posterior = self.model.forward(z[:, t, :])
+                    x_ekf[:, t, :] = m1x_posterior.squeeze(2)
+            elif self.model_name == "EKF":
+                # TODO: 此处功能尚未实现
+                # ekf.InitSequence(singer_model.m1x_0, singer_model.m2x_0)
+                # x_ekf = ekf.forward(z)
+                pass
+            # 求loss
+            loss_elements_in_iter = self.loss_fn(x_true, x_ekf[:, :, 0:2])
+            loss_trajs_in_iter = torch.mean(
+                loss_elements_in_iter, dim=(1, 2))
+            loss_batch_in_iter = torch.mean(loss_trajs_in_iter)
+
+            # 更新网络权重
+            if mode == "train":
+                self.optimizer.zero_grad()
+                loss_batch_in_iter.backward()
+                self.optimizer.step()
+                # self.scheduler.step(loss_batch_in_iter)
+                self.scheduler.step()
+            MSE_per_batch[data_i] =  loss_batch_in_iter.item()
+            # MSE_dB_trainset_singledata[data_i] = 10 * \
+            #     torch.log10(torch.mean(loss_element)).item()
+            # print(
+            #     f"{data_i+1}/{iter_num} MSE:{MSE_per_batch[data_i]}")
+            # print(
+            #     f"{data_i+1}/{iter_num} MSE(dB):{10*torch.log10(MSE_per_batch[data_i])}")
+        return MSE_per_batch
+
+    def save_checkpoints(self, name, content):
+        # 计算当前的模型数量
+        checkpoint_count = 0
+        files = os.listdir(
+            self.config["checkpoints_saving_folder"])
+        checkpoint_files = [
+            x for x in files if "KalmanNet.pt" in x]
+        checkpoint_files = sorted(
+            checkpoint_files, key=lambda x: float(x.split("_")[0]))
+        checkpoint_count = len(checkpoint_files)
+        # 清除过多保存的模型
+        if checkpoint_count > self.config["max_checkpoint_num"]:
+            for i in range(0, checkpoint_count - self.config["max_checkpoint_num"]):
+                remove_checkpoint_name = os.path.join(self.config["checkpoints_saving_folder"], checkpoint_files[-1])
+                if os.path.exists(remove_checkpoint_name):
+                    os.remove(remove_checkpoint_name)
+                else:
+                    print("要删除的文件不存在！")
+        print("准备保存模型")
+        torch.save(name, content)
+
