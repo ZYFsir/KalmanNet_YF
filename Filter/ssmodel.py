@@ -3,11 +3,13 @@ import numpy as np
 from numpy import exp
 from matplotlib.pyplot import plot
 from matplotlib.pyplot import show
-from utils import logger, device, config
+
+
 class SystemModel:
     """
     希望系统模型应当包括运动模型、测量模型
     """
+
     def __init__(self, f, Q, h, R, prior_Q=None, prior_Sigma=None, prior_S=None):
 
         ####################
@@ -49,11 +51,10 @@ class SystemModel:
         else:
             self.prior_S = prior_S
 
-
-
     #####################
     ### Init Sequence ###
     #####################
+
     def InitSequence(self, m1x_0, m2x_0):
         self.m1x_0 = m1x_0
         self.x_prev = m1x_0
@@ -76,10 +77,10 @@ class SystemModel:
 
         self.R = R
 
-
     #########################
     ### Generate Sequence ###
     #########################
+
     def GenerateSequence(self, Q_gen, R_gen, T):
         # Pre allocate an array for current state
         self.x = torch.empty(size=[self.m, T])
@@ -134,10 +135,10 @@ class SystemModel:
             ################################
             self.x_prev = xt
 
-
     ######################
     ### Generate Batch ###
     ######################
+
     def GenerateBatch(self, size, T, randomInit=False, seqInit=False, T_test=0):
 
         # Allocate Empty Array for Input
@@ -146,7 +147,7 @@ class SystemModel:
         # Allocate Empty Array for Target
         self.Target = torch.empty(size, self.m, T)
 
-        ### Generate Examples
+        # Generate Examples
         initConditions = self.m1x_0
 
         for i in range(0, size):
@@ -158,7 +159,7 @@ class SystemModel:
                 initConditions = torch.rand_like(self.m1x_0) * variance
             if(seqInit):
                 initConditions = self.x_prev
-                if((i*T % T_test)==0):
+                if((i*T % T_test) == 0):
                     initConditions = torch.zeros_like(self.m1x_0)
 
             self.InitSequence(initConditions, self.m2x_0)
@@ -169,7 +170,6 @@ class SystemModel:
 
             # Training sequence output
             self.Target[i, :, :] = self.x
-
 
     def sampling(self, q, r, gain):
 
@@ -197,4 +197,3 @@ class SystemModel:
         R_gen = np.transpose(Ar) * Ar
 
         return [Q_gen, R_gen]
-

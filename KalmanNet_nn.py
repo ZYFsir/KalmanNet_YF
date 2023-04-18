@@ -325,7 +325,6 @@ class KalmanNetNN(torch.nn.Module):
             self.x_out[:, t] = self.KNet_step(y[:, t])
         '''
         self.x_out = self.KNet_step(y)
-
         return self.x_out
 
     #########################

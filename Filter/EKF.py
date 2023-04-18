@@ -1,9 +1,11 @@
 import torch
-from functorch import jacrev, vmap
+from functorch import jacrev
+from torch import vmap
 from filing_paths import path_model
 from torch import autograd
 import sys
 import matplotlib.pyplot as plt
+
 
 class ExtendedKalmanFilter(torch.nn.Module):
     """
@@ -14,7 +16,8 @@ class ExtendedKalmanFilter(torch.nn.Module):
     #
     # 定义输入（测量值）为z，维度为m
     # 状态为x，维度为n
-    def __init__(self, SystemModel,mode='full'):
+
+    def __init__(self, SystemModel, mode='full'):
         super().__init__()
 
         self.f = SystemModel.f  # 运动模型
@@ -83,7 +86,8 @@ class ExtendedKalmanFilter(torch.nn.Module):
     # Compute Posterior
     def Correct(self):
         # Compute the 1-st posterior moment
-        self.m1x_posterior = self.m1x_prior + torch.bmm(self.KG, self.dy.unsqueeze(dim=2))
+        self.m1x_posterior = self.m1x_prior + \
+            torch.bmm(self.KG, self.dy.unsqueeze(dim=2))
 
         # Compute the 2-nd posterior moment
         # self.m2x_posterior = torch.bmm(self.m2y, torch.transpose(self.KG, 1, 2))
@@ -93,11 +97,11 @@ class ExtendedKalmanFilter(torch.nn.Module):
 
     def Update(self, y):
         self.Predict()      # 预测
-        self.m1x_prior_list.append(self.m1x_prior[0,0].cpu())
+        self.m1x_prior_list.append(self.m1x_prior[0, 0].cpu())
         self.KGain()        # 计算KG
         self.Innovation(y)  # 引入测量值
         self.Correct()      # 更新
-        self.m1x_posterior_list.append(self.m1x_posterior[0,0].cpu())
+        self.m1x_posterior_list.append(self.m1x_posterior[0, 0].cpu())
         return self.m1x_posterior, self.m2x_posterior
 
     def InitSequence(self, m1x_0, m2x_0):
@@ -135,8 +139,6 @@ class ExtendedKalmanFilter(torch.nn.Module):
             self.sigma[:, t, :, :] = torch.squeeze(sigmat)
         return self.x
 
-
-
     def jacobianBatch(self, x, a):
         if (a == 'ObsAcc'):
             g = self.h
@@ -153,23 +155,22 @@ class ExtendedKalmanFilter(torch.nn.Module):
             g = self.fInacc
             f_out = self.m
             f_in = self.m
-        jac=vmap(jacrev(g))(x)
+        jac = vmap(jacrev(g))(x)
         jac_reshape = jac.reshape([self.batch_size, f_out, f_in])
         return jac_reshape
-
 
     def jaccsd(self, fun, x):
         x = x.squeeze()
         z = fun(x)
         n = x.size()[0]
         m = z.size()[0]
-        A = torch.zeros([m,n])
+        A = torch.zeros([m, n])
         h = x*0 + 1e-5
         x1 = torch.zeros(n)
-        for k in range(0,n):
+        for k in range(0, n):
             x1.copy_(x)
-            x1[k]+=h[k]
-            A[:,k] = (fun(x1)-z)/h[k]
+            x1[k] += h[k]
+            A[:, k] = (fun(x1)-z)/h[k]
         return A.unsqueeze(0)
 
     def getJacobian(self, x, a):

@@ -1,17 +1,16 @@
 import torch
-from functorch import jacrev, vmap
+from functorch import jacrev
+from torch import vmap
 from filing_paths import path_model
 from torch import autograd, nn
 import torch.nn.functional as func
+import torch.nn.init as init
 import sys
 import matplotlib.pyplot as plt
 import numpy as np
 from numpy import exp
 from Filter import ssmodel
-from utils import logger, device, config
 
-in_mult = config["in_mult"]
-out_mult = config["out_mult"]
 
 class KalmanNet(torch.nn.Module):
     """
@@ -22,12 +21,18 @@ class KalmanNet(torch.nn.Module):
     #
     # 定义输入（测量值）为z，维度为m
     # 状态为x，维度为n
-    def __init__(self, mode='full'):
+
+    def __init__(self, in_mult, out_mult, m, n, batch_size, device, mode='full'):
         self.mode = mode
         super().__init__()
+        self.in_mult = in_mult
+        self.out_mult = out_mult
         # 设置维度
-        self.m = config["dim"]["state"]
-        self.n = config["dim"]["measurement"]
+        self.m = m
+        self.n = n
+
+        self.batch_size = batch_size
+        self.device = device
         # 初始化NN网络
         self.InitKGainNet()
 
@@ -50,9 +55,23 @@ class KalmanNet(torch.nn.Module):
         self.prior_Sigma = model.prior_Sigma
         self.prior_S = model.prior_S
 
-    def InitSequence(self, m1x_0, m2x_0):
-        self.m1x_0 = m1x_0
-        self.m2x_0 = m2x_0
+    def InitSequence(self, m1x_0=None, m2x_0=None):
+        if m1x_0 == None:
+            self.m1x_0 = self.model.m1x_0
+
+        else:
+            self.m1x_0 = m1x_0
+        if m2x_0 == None:
+            self.m2x_0 = self.model.m2x_0
+        else:
+            self.m2x_0 = m2x_0
+        self.m1x_0 = self.m1x_0.repeat((self.batch_size, 1, 1))
+        self.m2x_0 = self.m2x_0.repeat((self.batch_size, 1, 1))
+        # 网络输入需要一些posterior和previous值，在这里初始化
+        self.m1x_posterior = self.m1x_0
+        self.m1x_prior_previous = self.m1x_0
+        self.m1x_posterior_previous = self.m1x_0
+        self.y_previous = self.h_batch(self.m1x_0)
 
     def UpdateJacobians(self, F, H):
         self.F = F
@@ -61,18 +80,6 @@ class KalmanNet(torch.nn.Module):
         self.H_T = torch.transpose(H, -1, -2)
 
     def forward(self, z):
-        # Pre allocate an array for predicted state and variance
-        batch_size = z.shape[0]
-        self.batch_size = batch_size
-        # squeeze用于维度压缩，将大小仅为1的维度全部删除，用于避免1x1x1当成维度1的这种bug
-
-        self.m1x_0 = self.m1x_0.repeat((batch_size, 1, 1))
-        self.m2x_0 = self.m2x_0.repeat((batch_size, 1, 1))
-        self.m1x_posterior = self.m1x_0
-        self.m1x_posterior_previous = self.m1x_posterior
-        self.m1x_prior_previous = self.m1x_posterior
-        self.y_previous = self.h_batch(self.m1x_posterior)
-
         self.x = self.Update(z)    # 新增输入，获得输出
         return self.x
 
@@ -97,12 +104,16 @@ class KalmanNet(torch.nn.Module):
         fw_update_diff = self.m1x_posterior - self.m1x_prior_previous
 
         # 网络输入归一化
-        obs_diff = func.normalize(obs_diff, p=2, dim=0, eps=1e-12, out=None)
-        obs_innov_diff = func.normalize(obs_innov_diff, p=2, dim=0, eps=1e-12, out=None)
-        fw_evol_diff = func.normalize(fw_evol_diff, p=2, dim=0, eps=1e-12, out=None)
-        fw_update_diff = func.normalize(fw_update_diff, p=2, dim=0, eps=1e-12, out=None)
+        obs_diff = func.normalize(obs_diff, p=2, dim=1, eps=1e-12, out=None)
+        obs_innov_diff = func.normalize(
+            obs_innov_diff, p=2, dim=1, eps=1e-12, out=None)
+        fw_evol_diff = func.normalize(
+            fw_evol_diff, p=2, dim=1, eps=1e-12, out=None)
+        fw_update_diff = func.normalize(
+            fw_update_diff, p=2, dim=1, eps=1e-12, out=None)
 
-        tmp_KG = self.KGain_step(obs_diff, obs_innov_diff, fw_evol_diff, fw_update_diff)
+        tmp_KG = self.KGain_step(
+            obs_diff, obs_innov_diff, fw_evol_diff, fw_update_diff)
         self.KG = torch.reshape(tmp_KG, [self.batch_size, self.m, self.n])
         # batch_div = vmap(torch.div)
         # self.KG = batch_div(P12, self.m2y)
@@ -142,7 +153,7 @@ class KalmanNet(torch.nn.Module):
             g = self.fInacc
             f_out = self.m
             f_in = self.m
-        jac=vmap(jacrev(g))(x)
+        jac = vmap(jacrev(g))(x)
         jac_reshape = jac.reshape([self.batch_size, f_out, f_in])
         return jac_reshape
 
@@ -182,28 +193,28 @@ class KalmanNet(torch.nn.Module):
         Jac = Jac.view(-1, self.m)
         return Jac
 
-
-
     def InitKGainNet(self):
-        self.seq_len_input = 1
-        self.batch_size = 1
+        self.batch_size = self.batch_size
         # GRU to track Q
-        self.d_input_Q = self.m * in_mult
+        self.d_input_Q = self.m * self.in_mult
         self.d_hidden_Q = self.m ** 2
         self.GRU_Q = nn.GRU(self.d_input_Q, self.d_hidden_Q)
-        self.h_Q = torch.randn(self.batch_size, self.d_hidden_Q).to(device, non_blocking=True)
+        self.h_Q = torch.randn(self.batch_size, self.d_hidden_Q).to(
+            self.device, non_blocking=True)
 
         # GRU to track Sigma
-        self.d_input_Sigma = self.d_hidden_Q + self.m * in_mult
+        self.d_input_Sigma = self.d_hidden_Q + self.m * self.in_mult
         self.d_hidden_Sigma = self.m ** 2
         self.GRU_Sigma = nn.GRU(self.d_input_Sigma, self.d_hidden_Sigma)
-        self.h_Sigma = torch.randn(self.batch_size, self.d_hidden_Sigma).to(device, non_blocking=True)
+        self.h_Sigma = torch.randn(self.batch_size, self.d_hidden_Sigma).to(
+            self.device, non_blocking=True)
 
         # GRU to track S
-        self.d_input_S = self.n ** 2 + 2 * self.n * in_mult
+        self.d_input_S = self.n ** 2 + 2 * self.n * self.in_mult
         self.d_hidden_S = self.n ** 2
         self.GRU_S = nn.GRU(self.d_input_S, self.d_hidden_S)
-        self.h_S = torch.randn(self.batch_size, self.d_hidden_S).to(device, non_blocking=True)
+        self.h_S = torch.randn(self.batch_size, self.d_hidden_S).to(
+            self.device, non_blocking=True)
 
         # Fully connected 1
         self.d_input_FC1 = self.d_hidden_Sigma
@@ -215,7 +226,7 @@ class KalmanNet(torch.nn.Module):
         # Fully connected 2
         self.d_input_FC2 = self.d_hidden_S + self.d_hidden_Sigma
         self.d_output_FC2 = self.n * self.m
-        self.d_hidden_FC2 = self.d_input_FC2 * out_mult
+        self.d_hidden_FC2 = self.d_input_FC2 * self.out_mult
         self.FC2 = nn.Sequential(
             nn.Linear(self.d_input_FC2, self.d_hidden_FC2),
             nn.ReLU(),
@@ -237,25 +248,74 @@ class KalmanNet(torch.nn.Module):
 
         # Fully connected 5
         self.d_input_FC5 = self.m
-        self.d_output_FC5 = self.m * in_mult
+        self.d_output_FC5 = self.m * self.in_mult
         self.FC5 = nn.Sequential(
             nn.Linear(self.d_input_FC5, self.d_output_FC5),
             nn.ReLU())
 
         # Fully connected 6
         self.d_input_FC6 = self.m
-        self.d_output_FC6 = self.m * in_mult
+        self.d_output_FC6 = self.m * self.in_mult
         self.FC6 = nn.Sequential(
             nn.Linear(self.d_input_FC6, self.d_output_FC6),
             nn.ReLU())
 
         # Fully connected 7
         self.d_input_FC7 = 2 * self.n
-        self.d_output_FC7 = 2 * self.n * in_mult
+        self.d_output_FC7 = 2 * self.n * self.in_mult
         self.FC7 = nn.Sequential(
             nn.Linear(self.d_input_FC7, self.d_output_FC7),
             nn.ReLU())
-
+        ### Initialize network parameters ###
+        # Apply Xavier initialization to GRU layers
+        # GRU Q
+        # for name, param in self.GRU_Q.named_parameters():
+        #     if 'weight_ih' in name:
+        #         init.xavier_uniform_(param.data)
+        #     elif 'weight_hh' in name:
+        #         init.xavier_uniform_(param.data)
+        #     elif 'bias' in name:
+        #         param.data.fill_(0)
+        # # GRU Sigma
+        # for name, param in self.GRU_Sigma.named_parameters():
+        #     if 'weight_ih' in name:
+        #         init.xavier_uniform_(param.data)
+        #     elif 'weight_hh' in name:
+        #         init.xavier_uniform_(param.data)
+        #     elif 'bias' in name:
+        #         param.data.fill_(0)
+        # # GRU S
+        # for name, param in self.GRU_S.named_parameters():
+        #     if 'weight_ih' in name:
+        #         init.xavier_uniform_(param.data)
+        #     elif 'weight_hh' in name:
+        #         init.xavier_uniform_(param.data)
+        #     elif 'bias' in name:
+        #         param.data.fill_(0)
+        # # Apply He initialization to FC layers
+        # # FC1
+        # init.kaiming_uniform_(self.FC1[0].weight, nonlinearity='relu')
+        # self.FC1[0].bias.data.fill_(0)
+        # # FC2
+        # init.kaiming_uniform_(self.FC2[0].weight, nonlinearity='relu')
+        # self.FC2[0].bias.data.fill_(0)
+        # init.kaiming_uniform_(self.FC2[2].weight, nonlinearity='relu')
+        # self.FC2[2].bias.data.fill_(0)
+        # # FC3
+        # init.kaiming_uniform_(self.FC3[0].weight, nonlinearity='relu')
+        # self.FC3[0].bias.data.fill_(0)
+        # # FC4
+        # init.kaiming_uniform_(self.FC4[0].weight, nonlinearity='relu')
+        # self.FC4[0].bias.data.fill_(0)
+        # # FC5
+        # init.kaiming_uniform_(self.FC5[0].weight, nonlinearity='relu')
+        # self.FC5[0].bias.data.fill_(0)
+        # # FC6
+        # init.kaiming_uniform_(self.FC6[0].weight, nonlinearity='relu')
+        # self.FC6[0].bias.data.fill_(0)
+        # # FC7
+        # init.kaiming_uniform_(self.FC7[0].weight, nonlinearity='relu')
+        # self.FC7[0].bias.data.fill_(0)
         """
         # Fully connected 8
         self.d_input_FC8 = self.d_hidden_Q
@@ -268,9 +328,9 @@ class KalmanNet(torch.nn.Module):
         """
 
     def KGain_step(self, obs_diff, obs_innov_diff, fw_evol_diff, fw_update_diff):
-
         def expand_dim(x):
-            expanded = torch.empty(self.seq_len_input, self.batch_size, x.shape[-1])
+            expanded = torch.empty(
+                self.seq_len_input, self.batch_size, x.shape[-1])
             expanded[0, 0, :] = x
             return expanded
 
@@ -280,10 +340,13 @@ class KalmanNet(torch.nn.Module):
         # fw_update_diff = expand_dim(fw_update_diff)
 
         # obs_diff对应yt， obs_innov_diff对应~yt， fw_evol_diff对应^xt, fw_update_diff对应~xt
-        obs_diff = torch.reshape(obs_diff, [self.batch_size, self.n])
-        obs_innov_diff = torch.reshape(obs_innov_diff, [self.batch_size, self.n])
-        fw_evol_diff = torch.reshape(fw_evol_diff, [self.batch_size, self.m])
-        fw_update_diff = torch.reshape(fw_update_diff, [self.batch_size, self.m])
+        obs_diff = torch.reshape(obs_diff, [1, self.batch_size, self.n])
+        obs_innov_diff = torch.reshape(
+            obs_innov_diff, [1, self.batch_size, self.n])
+        fw_evol_diff = torch.reshape(
+            fw_evol_diff, [1, self.batch_size, self.m])
+        fw_update_diff = torch.reshape(
+            fw_update_diff, [1, self.batch_size, self.m])
 
         ####################
         ### Forward Flow ###
@@ -308,7 +371,7 @@ class KalmanNet(torch.nn.Module):
         out_FC6 = self.FC6(in_FC6)
 
         # Sigma_GRU
-        in_Sigma = torch.cat((out_Q, out_FC6), 1)
+        in_Sigma = torch.cat((out_Q, out_FC6), 2)
         out_Sigma, self.h_Sigma = self.GRU_Sigma(in_Sigma, self.h_Sigma)
 
         # FC 1
@@ -316,15 +379,15 @@ class KalmanNet(torch.nn.Module):
         out_FC1 = self.FC1(in_FC1)
 
         # FC 7
-        in_FC7 = torch.cat((obs_diff, obs_innov_diff), 1)
+        in_FC7 = torch.cat((obs_diff, obs_innov_diff), 2)
         out_FC7 = self.FC7(in_FC7)
 
         # S-GRU
-        in_S = torch.cat((out_FC1, out_FC7), 1)
+        in_S = torch.cat((out_FC1, out_FC7), 2)
         out_S, self.h_S = self.GRU_S(in_S, self.h_S)
 
         # FC 2
-        in_FC2 = torch.cat((out_Sigma, out_S), 1)
+        in_FC2 = torch.cat((out_Sigma, out_S), 2)
         out_FC2 = self.FC2(in_FC2)
 
         #####################
@@ -332,11 +395,11 @@ class KalmanNet(torch.nn.Module):
         #####################
 
         # FC 3
-        in_FC3 = torch.cat((out_S, out_FC2), 1)
+        in_FC3 = torch.cat((out_S, out_FC2), 2)
         out_FC3 = self.FC3(in_FC3)
 
         # FC 4
-        in_FC4 = torch.cat((out_Sigma, out_FC3), 1)
+        in_FC4 = torch.cat((out_Sigma, out_FC3), 2)
         out_FC4 = self.FC4(in_FC4)
 
         # updating hidden state of the Sigma-GRU
@@ -344,58 +407,64 @@ class KalmanNet(torch.nn.Module):
 
         return out_FC2
 
-    def init_SingerModel(self, station, height):
-        m = config["dim"]["state"]
-        n = config["dim"]["measurement"]
-        station = station.cuda()
-        height = height.cuda()
+    # def init_SingerModel(self, station, height):
+    #     m = self.
+    #     n = config["dim"]["measurement"]
+    #     station = station.cuda()
+    #     height = height.cuda()
 
-        r = config["Observation model"]["r"]  # 测量噪声
+    #     r = config["Observation model"]["r"]  # 测量噪声
 
-        I = torch.eye(2, dtype=torch.double, device=device)
-        alpha = 0.1
-        tao = 1
-        sigma_a = 100
-        R_corr = 0.5
-        x_p = 1e6
+    #     I = torch.eye(2, dtype=torch.double, device=self.device)
+    #     alpha = 0.1
+    #     tao = 1
+    #     sigma_a = 100
+    #     R_corr = 0.5
+    #     x_p = 1e6
 
-        def f(x):
-            F1 = torch.hstack((I, tao * I, (alpha * tao - 1 + np.exp(-alpha * tao)) / (alpha ** 2) * I))
-            # F1[2,:] = torch.tensor([0,0,1,0,0,0,0,0,0])
-            F2 = torch.hstack((0 * I, I, (1 - np.exp(-alpha * tao)) / alpha * I))
-            # F2[2, :] = torch.tensor([0, 0, 0, 0, 0, 0, 0, 0, 0])
-            F3 = torch.hstack((0 * I, 0 * I, np.exp(-alpha * tao) * I))
-            # F3[2, :] = torch.tensor([0, 0, 0, 0, 0, 0, 0, 0, 0])
-            F = torch.vstack((F1, F2, F3))
-            return torch.matmul(F, x)
+    #     def f(x):
+    #         F1 = torch.hstack(
+    #             (I, tao * I, (alpha * tao - 1 + np.exp(-alpha * tao)) / (alpha ** 2) * I))
+    #         # F1[2,:] = torch.tensor([0,0,1,0,0,0,0,0,0])
+    #         F2 = torch.hstack(
+    #             (0 * I, I, (1 - np.exp(-alpha * tao)) / alpha * I))
+    #         # F2[2, :] = torch.tensor([0, 0, 0, 0, 0, 0, 0, 0, 0])
+    #         F3 = torch.hstack((0 * I, 0 * I, np.exp(-alpha * tao) * I))
+    #         # F3[2, :] = torch.tensor([0, 0, 0, 0, 0, 0, 0, 0, 0])
+    #         F = torch.vstack((F1, F2, F3))
+    #         return torch.matmul(F, x)
 
-        def h(x):
-            u = torch.hstack((x[0:2, 0], height))
-            r = torch.norm(u - station, dim=2)
-            tdoa = r[0, 1:] - r[0, 0]
-            return tdoa
+    #     def h(x):
+    #         u = torch.hstack((x[0:2, 0], height))
+    #         r = torch.norm(u - station, dim=2)
+    #         tdoa = r[0, 1:] - r[0, 0]
+    #         return tdoa
 
-        alpha_tao = 0.05
-        q11 = (sigma_a ** 2) / (alpha ** 4) * (1 - exp(
-            -2 * alpha_tao) + 2 * alpha_tao + 2 / 3 * alpha_tao ** 3 - 2 * alpha_tao ** 2 - 4 * alpha_tao * exp(
-            -alpha_tao))
-        q12 = (sigma_a ** 2) / (alpha ** 3) * (exp(-2 * alpha_tao) + 1 - 2 * exp(-alpha_tao) + 2 * alpha_tao * exp(
-            -alpha_tao) - 2 * alpha_tao + alpha_tao ** 2)
-        q13 = (sigma_a ** 2) / (alpha ** 2) * (1 - exp(-2 * alpha_tao) - 2 * alpha_tao * exp(-alpha_tao))
-        q22 = (sigma_a ** 2) / (alpha ** 2) * (4 * exp(-alpha_tao) - 3 - exp(-2 * alpha_tao) + 2 * alpha_tao)
-        q23 = (sigma_a ** 2) / (alpha) * (exp(-2 * alpha_tao) + 1 - 2 * exp(-alpha_tao))
-        q33 = sigma_a ** 2 * (1 - exp(-2 * alpha_tao))
-        Q1 = torch.hstack((q11 * I, q12 * I, q13 * I))
-        Q2 = torch.hstack((q12 * I, q22 * I, q23 * I))
-        Q3 = torch.hstack((q13 * I, q23 * I, q33 * I))
-        Q_true = torch.vstack((Q1, Q2, Q3))
+    #     alpha_tao = 0.05
+    #     q11 = (sigma_a ** 2) / (alpha ** 4) * (1 - exp(
+    #         -2 * alpha_tao) + 2 * alpha_tao + 2 / 3 * alpha_tao ** 3 - 2 * alpha_tao ** 2 - 4 * alpha_tao * exp(
+    #         -alpha_tao))
+    #     q12 = (sigma_a ** 2) / (alpha ** 3) * (exp(-2 * alpha_tao) + 1 - 2 * exp(-alpha_tao) + 2 * alpha_tao * exp(
+    #         -alpha_tao) - 2 * alpha_tao + alpha_tao ** 2)
+    #     q13 = (sigma_a ** 2) / (alpha ** 2) * \
+    #         (1 - exp(-2 * alpha_tao) - 2 * alpha_tao * exp(-alpha_tao))
+    #     q22 = (sigma_a ** 2) / (alpha ** 2) * \
+    #         (4 * exp(-alpha_tao) - 3 - exp(-2 * alpha_tao) + 2 * alpha_tao)
+    #     q23 = (sigma_a ** 2) / (alpha) * \
+    #         (exp(-2 * alpha_tao) + 1 - 2 * exp(-alpha_tao))
+    #     q33 = sigma_a ** 2 * (1 - exp(-2 * alpha_tao))
+    #     Q1 = torch.hstack((q11 * I, q12 * I, q13 * I))
+    #     Q2 = torch.hstack((q12 * I, q22 * I, q23 * I))
+    #     Q3 = torch.hstack((q13 * I, q23 * I, q33 * I))
+    #     Q_true = torch.vstack((Q1, Q2, Q3))
 
-        R_true = R_corr * (r ** 2) * (torch.ones(n) - torch.eye(n) + torch.eye(n) / R_corr)
-        model = ssmodel(f, Q_true, h, R_true)
+    #     R_true = R_corr * (r ** 2) * (torch.ones(n) -
+    #                                   torch.eye(n) + torch.eye(n) / R_corr)
+    #     model = ssmodel(f, Q_true, h, R_true)
 
-        model.InitSequence(torch.tensor([[1e4, 1e5, 0, 0, 0, 0]]).T, x_p * torch.ones([m, m]))
-        return model
-
+    #     model.InitSequence(torch.tensor(
+    #         [[1e4, 1e5, 0, 0, 0, 0]]).T, x_p * torch.ones([m, m]))
+    #     return model
 
     def init_KalmanNet(self):
         self.f = self.model.f  # 运动模型
@@ -427,12 +496,13 @@ class KalmanNet(torch.nn.Module):
 
     def init_hidden(self):
         weight = next(self.parameters()).data
-        hidden = weight.new(1, self.d_hidden_S).zero_()
+        # 这里用weight只是为了保证dtype和device和网络相同，跟内容无关
+        hidden = weight.new(1, self.batch_size, self.d_hidden_S).zero_()
         self.h_S = hidden.data
-        self.h_S[0, :] = self.prior_S.flatten()
-        hidden = weight.new(1, self.d_hidden_Sigma).zero_()
+        self.h_S[0, :, :] = self.prior_S.flatten()
+        hidden = weight.new(1, self.batch_size, self.d_hidden_Sigma).zero_()
         self.h_Sigma = hidden.data
-        self.h_Sigma[0, :] = self.prior_Sigma.flatten()
-        hidden = weight.new(1, self.d_hidden_Q).zero_()
+        self.h_Sigma[0, :, :] = self.prior_Sigma.flatten()
+        hidden = weight.new(1, self.batch_size, self.d_hidden_Q).zero_()
         self.h_Q = hidden.data
-        self.h_Q[0,:] = self.prior_Q.flatten()
+        self.h_Q[0, :, :] = self.prior_Q.flatten()
