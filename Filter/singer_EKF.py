@@ -6,7 +6,7 @@ from Filter.ssmodel import SystemModel
 
 def init_SingerModel(station, z, m, n, r, device):
     station = station.cuda()
-    if z.shape != 1:
+    if z.ndim!=0 and z.shape >= 1:
         z = z[0]
     z = z.cuda()
 
@@ -30,8 +30,9 @@ def init_SingerModel(station, z, m, n, r, device):
 
     def h(x):
         u = torch.hstack((x[0:2, 0], z))     # TODO: 注意这里假定了所有数据中z均一样
-        r = torch.norm(u - station, dim=2)
-        tdoa = r[0, 1:] - r[0, 0]
+        u = u.repeat([4,1])
+        r = torch.norm(u - station, dim=1)
+        tdoa = r[1:] - r[0]
         return tdoa
 
     alpha_tao = 0.05

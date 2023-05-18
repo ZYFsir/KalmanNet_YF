@@ -3,18 +3,18 @@
   "use_comet": true,
   "loss_fn": "MSELoss",
   "training": {
-    "epoch": 4000,
+    "epoch": 5000,
     "optimizer": {
       "name": "AdamW",
       "params": {
-        "lr": 1e-5
+        "lr": 1e-10
       }
     },
     "scheduler": {
       "name": "CyclicLR",
       "params": {
-        "base_lr" : 1e-6,
-        "max_lr": 1e-5,
+        "base_lr" : 1e-10,
+        "max_lr": 1e-8,
         "cycle_momentum": false
       }
     }
@@ -43,8 +43,8 @@
   },
   "dataloader_params": {
     "batch_size": 64,
-    "num_workers": 0,
-    "pin_memory": false,
+    "num_workers": 8,
+    "pin_memory": true,
     "drop_last": true,
     "shuffle": false
   },

@@ -19,7 +19,6 @@ from Filter.KalmanNet import KalmanNet
 from UI.analyze import analyze
 
 
-torch.set_default_dtype(torch.float32)
 torch.set_printoptions(precision=12)
 
 if __name__ == "__main__":

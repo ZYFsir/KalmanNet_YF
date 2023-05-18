@@ -1,14 +1,15 @@
-from comet_ml import Experiment
 import os
-
+import time
 import torch
+from comet_ml import Experiment
 from torch import nn
-from utils.torchSettings import get_torch_device, get_config
-from torch.utils.data import Dataset, DataLoader
+from torch.utils.data import DataLoader
+
 from Dataset.TDOADataset import TDOADataset
 from Filter.KalmanNet import KalmanNet
 from Filter.singer_EKF import init_SingerModel
-from Filter.EKF import ExtendedKalmanFilter
+from utils.torchSettings import get_torch_device, get_config
+from torch.profiler import profile, record_function, ProfilerActivity
 
 class Exp:
     def __init__(self, model_name="KNet"):
@@ -29,12 +30,12 @@ class Exp:
         # 名称与函数的对应字典
         self.optimizer_config_dict = {
             "AdamW": torch.optim.AdamW,
-            "SGD":torch.optim.SGD,
+            "SGD": torch.optim.SGD,
             "ASGD": torch.optim.ASGD
         }
         self.scheduler_config_dict = {
             "CyclicLR": torch.optim.lr_scheduler.CyclicLR,
-            "ReduceLROnPlateau":torch.optim.lr_scheduler.ReduceLROnPlateau
+            "ReduceLROnPlateau": torch.optim.lr_scheduler.ReduceLROnPlateau
         }
 
         self.loss_fn = nn.MSELoss(reduction="none")
@@ -62,9 +63,11 @@ class Exp:
         for dataset_name, dataset_config in self.config["dataset"].items():
             if dataset_config['is_used'] == False:
                 continue
+            dataset_ = TDOADataset(dataset_config["path"])
+            self.station = dataset_.station
+            self.h = dataset_.h
             self.dataloader_dict[dataset_name] = DataLoader(
-                dataset=TDOADataset(dataset_config["path"]),
-                **self.config["dataloader_params"])
+                dataset=dataset_, **self.config["dataloader_params"])
             self.dataset_size_dict[dataset_name] = self.dataloader_dict[dataset_name].dataset.N
 
     def model_module(self, model_name):
@@ -73,8 +76,8 @@ class Exp:
             ekf = KalmanNet(self.config["in_mult"], self.config["out_mult"],
                             self.m, self.n, self.batch_size, self.device)
         elif model_name == "EKF":
-
-            ekf = ExtendedKalmanFilter(singer_model)
+            pass
+            # ekf = ExtendedKalmanFilter(singer_model)
         self.model = ekf.to(self.device)
 
     def load_checkpoints(self):
@@ -106,15 +109,17 @@ class Exp:
                 self.model.parameters(), **self.config["training"]["optimizer"]["params"])
         else:
             self.optimizer = self.optimizer_config_dict[self.config["training"]
-                                                        ["optimizer"]["name"]](self.model.parameters())
+            ["optimizer"]["name"]](self.model.parameters())
         if "params" in self.config["training"]["scheduler"]:
             self.scheduler = self.scheduler_config_dict[self.config["training"]["scheduler"]["name"]](
                 self.optimizer, **self.config["training"]["scheduler"]["params"])
         else:
             self.scheduler = self.scheduler_config_dict[self.config["training"]
-                                                        ["scheduler"]["name"]](self.optimizer)
+            ["scheduler"]["name"]](self.optimizer)
 
     def run(self, mode="test", dataset_name="test"):
+        start = torch.cuda.Event(enable_timing=True)
+        end = torch.cuda.Event(enable_timing=True)
         if mode == "train":
             epoch_i = self.epoch_i
             epoch = self.epoch
@@ -129,30 +134,34 @@ class Exp:
         if dataset_name not in self.dataloader_dict:
             print(f"Exp datase_name {dataset_name} invalid")
             raise
-
-        iter_num = self.dataset_size_dict[dataset_name]//self.batch_size
         MSE_per_epoch = torch.empty([self.epoch])
 
+        if self.model_name == "KNet":
+            singer_model = init_SingerModel(
+                self.station, self.h, self.m, self.n, self.config["Observation model"]["r"], self.device)
+            self.model.set_ssmodel(singer_model)
         while epoch_i < epoch:
             print(f"******* epoch {epoch_i} *********")
             # 一次训练
-            MSE_per_batch = self.run_one_epoch(mode="train", dataset_name="train")
+            MSE_per_batch = self.run_one_epoch(mode=mode, dataset_name=dataset_name)
+            print("epoch结束，开始Loss计算")
+            # loss计算
             total_loss = torch.mean(MSE_per_batch)
             MSE_per_epoch[epoch_i] = total_loss
             # 记录结果
-            print("记录结果")
+            print("计算loss结束，log记录结果")
             self.logger.log_metrics({
                 f"MSE_{dataset_name}": MSE_per_epoch[epoch_i],
-                "MSE_dB_{dataset_name}": 10*torch.log10(MSE_per_epoch[epoch_i]),
+                f"MSE_dB_{dataset_name}": 10 * torch.log10(MSE_per_epoch[epoch_i]),
             }, epoch=epoch_i)
 
             # 保存模型
             if mode == "train":
-                if epoch_i % 5 == 0:
+                if epoch_i % 10 == 0:
                     MSE_test = self.run_one_epoch(mode="test", dataset_name="test")
                     loss_test = torch.mean(MSE_test)
                     checkpoint_name = os.path.join(self.config["checkpoints_saving_folder"],
-                        f"{MSE_per_epoch[epoch_i]}_dB_epoch{epoch_i}_KalmanNet.pt")
+                                                   f"{MSE_per_epoch[epoch_i]}_dB_epoch{epoch_i}_KalmanNet.pt")
                     checkpoint_content = {
                         'epoch': epoch_i,
                         'model_state_dict': self.model.state_dict(),
@@ -163,38 +172,57 @@ class Exp:
                     self.save_checkpoints(name=checkpoint_name, content=checkpoint_content)
             epoch_i += 1
 
+
     def run_one_epoch(self, mode="test", dataset_name="test"):
         iter_num = self.dataset_size_dict[dataset_name] // self.batch_size
         MSE_per_batch = torch.empty([iter_num])
+        print("开始本次epoch，开始初始化")
         for data_i, data in enumerate(self.dataloader_dict[dataset_name]):
-            if data_i == 0 and self.model_name == "KNet":
-                singer_model = init_SingerModel(
-                    data["station"], data["h"], self.m, self.n, self.config["Observation model"]["r"], self.device)
-                self.model.set_ssmodel(singer_model)
-
             # 基本变量读取
+            print("进入dataloader for循环")
             (batch_size, T, n) = data["z"].shape
             self.model.batch_size = batch_size
             x_ekf = torch.empty([batch_size, T, self.m])
+            print("x_ekf创建完成")
             x_true = data["x"].cuda()
             z = data["z"].cuda()
+            device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+            self.model.to(device)
+            print("数据搬运到GPU完成")
             if self.model_name == "KNet":
+                print("开始初始化")
                 self.model.init_hidden()
                 self.model.InitSequence()
-                for t in range(0, T):
-                    m1x_posterior = self.model.forward(z[:, t, :])
-                    x_ekf[:, t, :] = m1x_posterior.squeeze(2)
+                print("初始化完成")
+                self.model.forward(z)
+                print("模型forward完成")
+                # with torch.profiler.profile(
+                #         activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA],
+                #         #activities=[ProfilerActivity.CUDA],
+                #         schedule=torch.profiler.schedule(wait=1, warmup=2, active=3, repeat=2),
+                #         on_trace_ready=torch.profiler.tensorboard_trace_handler('./Logs/KalmanNet'),
+                #         record_shapes=False,
+                #         with_stack=True,
+                #         use_cuda=True,
+                #         with_modules=True
+                #         ) as prof:
+                # for t in range(0, T):
+                #     m1x_posterior = self.model.forward(z[:, t, :])
+                #     x_ekf[:, t, :] = m1x_posterior.squeeze(2)
+                        # prof.step()
+                # print(prof.key_averages().table(sort_by="self_cuda_time_total", row_limit=10))
             elif self.model_name == "EKF":
                 # TODO: 此处功能尚未实现
                 # ekf.InitSequence(singer_model.m1x_0, singer_model.m2x_0)
                 # x_ekf = ekf.forward(z)
                 pass
             # 求loss
+            # print("开始计算loss")
             loss_elements_in_iter = self.loss_fn(x_true, x_ekf[:, :, 0:2])
             loss_trajs_in_iter = torch.mean(
                 loss_elements_in_iter, dim=(1, 2))
             loss_batch_in_iter = torch.mean(loss_trajs_in_iter)
-
+            loss_batch_in_iter.requires_grad_(True)
             # 更新网络权重
             if mode == "train":
                 self.optimizer.zero_grad()
@@ -202,7 +230,8 @@ class Exp:
                 self.optimizer.step()
                 # self.scheduler.step(loss_batch_in_iter)
                 self.scheduler.step()
-            MSE_per_batch[data_i] =  loss_batch_in_iter.item()
+                # print("更新网络权重完成")
+            MSE_per_batch[data_i] = loss_batch_in_iter.item()
             # MSE_dB_trainset_singledata[data_i] = 10 * \
             #     torch.log10(torch.mean(loss_element)).item()
             # print(
@@ -230,5 +259,4 @@ class Exp:
                 else:
                     print("要删除的文件不存在！")
         print("准备保存模型")
-        torch.save(name, content)
-
+        torch.save(content, name)

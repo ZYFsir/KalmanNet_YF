@@ -17,44 +17,61 @@ def file_filter(f):
 class TDOADataset(Dataset):
     def __init__(self, path, name=None, size=-1):
         self.name = name
-        self.input = []
-        self.target = []
-        self.station = []
-        self.rmse_cwls = []
-        self.rmse_imm = []
-        self.h = []  # 运动平面高度
         # dataloader只能读取cpu中的数据，如果存到GPU，则dataloader读到的是0
-        self.device = torch.device("cpu")
+        # self.device = torch.device("cpu")
         files = os.listdir(path)
         files = list(filter(file_filter, files))
         self.N = len(files) if size < 0 else size
+        self.input = [None] * self.N
+        self.target = [None] * self.N
+        # self.station = [None] * self.N
+        self.rmse_cwls = [None] * self.N
+        self.rmse_imm = [None] * self.N
+        # self.h = [None] * self.N  # 运动平面高度
+
+        # station 和 h 只读取固定值
+        data = io.loadmat(os.path.join(path, files[0]), mat_dtype=False)
+        self.station = data['test_station'][0].astype(np.float32)
+        self.station.shape = (4, 3)
+        self.station = torch.Tensor(self.station)
+        self.h = data["test_data"][0, 2].astype(np.float32)
+        self.h = torch.as_tensor(self.h)
+
         for idx in range(0, self.N):
-            data = io.loadmat(os.path.join(path, files[idx]), mat_dtype=True)
+            data = io.loadmat(os.path.join(path, files[idx]), mat_dtype=False)
+            if idx == 0:
+
+                T, m = data['test_tdoa'].shape
+                self.input = np.zeros((self.N, T, m), dtype="int32")
+                self.target = np.zeros((self.N, T, 2), dtype="int32")
+            self.input[idx, :, :] = data['test_tdoa']
+            self.target[idx, :, :] = data["test_data"][0, 2]
             # if not np.isnan(data['rmse_imm'][0][0]):
-            self.station.append(torch.tensor(data['test_station'][0].reshape(
-                (4, 3)), dtype=torch.float32, device=self.device))
-            self.input.append(torch.tensor(
-                data['test_tdoa'], dtype=torch.float32, device=self.device))
-            self.target.append(torch.tensor(
-                data['test_data'][:, 0:2], dtype=torch.float32, device=self.device))
-            self.h.append(torch.tensor(
-                data["test_data"][0, 2], dtype=torch.float32, device=self.device))
+            # self.station[idx] = torch.tensor(data['test_station'][0].reshape(
+            #     (4, 3)), dtype=torch.float32, device=self.device)
+            # self.input[idx] = torch.tensor(
+            #     data['test_tdoa'], dtype=torch.float32, device=self.device)
+            # self.target[idx] = torch.tensor(
+            #     data['test_data'][:, 0:2], dtype=torch.float32, device=self.device)
+            # self.h[idx] = torch.tensor(
+            #     data["test_data"][0, 2], dtype=torch.float32, device=self.device)
             # self.rmse_cwls.append(torch.tensor(data['rmse_cwls'], dtype=torch.double, device=self.device))
             # self.rmse_imm.append(torch.tensor(data['rmse_imm'], dtype=torch.double, device=self.device))
         self.N = len(self.input)
-        self.length = self.input[0].shape[0]
+        self.length = T
+
+
 
     def __getitem__(self, item):
-        return {'z': self.input[item],
-                'x': self.target[item],
-                'station': self.station[item],
+        return {'z': torch.Tensor(self.input[item, :, :]),
+                'x': torch.Tensor(self.target[item, :, :])}
+                # 'station': torch.Tensor(self.station),
                 # 'rmse_cwls':self.rmse_cwls[item],
                 # 'rmse_imm':self.rmse_imm[item],
-                'h': self.h[item]}
+                # 'h': torch.as_tensor(self.h)}
 
     def __len__(self):
         return self.N
-
 
 # class DataloaderList(object):
 #     def __init__(self):

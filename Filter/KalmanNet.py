@@ -79,9 +79,15 @@ class KalmanNet(torch.nn.Module):
         self.H = H
         self.H_T = torch.transpose(H, -1, -2)
 
-    def forward(self, z):
+    def _forward(self, z):
         self.x = self.Update(z)    # 新增输入，获得输出
         return self.x
+    def forward(self, z):
+        (batch_size, T, n) = z.shape
+        x_ekf = torch.empty([batch_size, T, self.m])
+        for t in range(0, T):
+            m1x_posterior = self._forward(z[:, t, :])
+            x_ekf[:, t, :] = m1x_posterior.squeeze(2)
 
     def Update(self, y):
         self.Predict()      # 预测
@@ -340,13 +346,13 @@ class KalmanNet(torch.nn.Module):
         # fw_update_diff = expand_dim(fw_update_diff)
 
         # obs_diff对应yt， obs_innov_diff对应~yt， fw_evol_diff对应^xt, fw_update_diff对应~xt
-        obs_diff = torch.reshape(obs_diff, [1, self.batch_size, self.n])
+        obs_diff = torch.reshape(obs_diff, [1, self.batch_size, self.n]).to(torch.float32)
         obs_innov_diff = torch.reshape(
-            obs_innov_diff, [1, self.batch_size, self.n])
+            obs_innov_diff, [1, self.batch_size, self.n]).to(torch.float32)
         fw_evol_diff = torch.reshape(
-            fw_evol_diff, [1, self.batch_size, self.m])
+            fw_evol_diff, [1, self.batch_size, self.m]).to(torch.float32)
         fw_update_diff = torch.reshape(
-            fw_update_diff, [1, self.batch_size, self.m])
+            fw_update_diff, [1, self.batch_size, self.m]).to(torch.float32)
 
         ####################
         ### Forward Flow ###
