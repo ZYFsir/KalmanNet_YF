@@ -37,15 +37,18 @@ class TDOADataset(Dataset):
         self.h = data["test_data"][0, 2].astype(np.float32)
         self.h = torch.as_tensor(self.h)
 
-        for idx in range(0, self.N):
-            data = io.loadmat(os.path.join(path, files[idx]), mat_dtype=False)
-            if idx == 0:
-
-                T, m = data['test_tdoa'].shape
-                self.input = np.zeros((self.N, T, m), dtype="int32")
-                self.target = np.zeros((self.N, T, 2), dtype="int32")
-            self.input[idx, :, :] = data['test_tdoa']
-            self.target[idx, :, :] = data["test_data"][0, 2]
+        data = torch.load("Dataset/trainset.pt")
+        self.input = data["input"]
+        N, T, m = self.input.shape
+        self.target = data["target"]
+        # for idx in range(0, self.N):
+        #     data = io.loadmat(os.path.join(path, files[idx]), mat_dtype=False)
+        #     if idx == 0:
+        #         T, m = data['test_tdoa'].shape
+        #         self.input = np.zeros((self.N, T, m), dtype="int32")
+        #         self.target = np.zeros((self.N, T, 2), dtype="int32")
+        #     self.input[idx, :, :] = data['test_tdoa']
+        #     self.target[idx, :, :] = data["test_data"][0, 2]
             # if not np.isnan(data['rmse_imm'][0][0]):
             # self.station[idx] = torch.tensor(data['test_station'][0].reshape(
             #     (4, 3)), dtype=torch.float32, device=self.device)
@@ -57,10 +60,8 @@ class TDOADataset(Dataset):
             #     data["test_data"][0, 2], dtype=torch.float32, device=self.device)
             # self.rmse_cwls.append(torch.tensor(data['rmse_cwls'], dtype=torch.double, device=self.device))
             # self.rmse_imm.append(torch.tensor(data['rmse_imm'], dtype=torch.double, device=self.device))
-        self.N = len(self.input)
+        self.N = N
         self.length = T
-
-
 
     def __getitem__(self, item):
         return {'z': torch.Tensor(self.input[item, :, :]),

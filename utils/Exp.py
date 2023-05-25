@@ -118,8 +118,6 @@ class Exp:
             ["scheduler"]["name"]](self.optimizer)
 
     def run(self, mode="test", dataset_name="test"):
-        start = torch.cuda.Event(enable_timing=True)
-        end = torch.cuda.Event(enable_timing=True)
         if mode == "train":
             epoch_i = self.epoch_i
             epoch = self.epoch
@@ -142,6 +140,7 @@ class Exp:
             self.model.set_ssmodel(singer_model)
         while epoch_i < epoch:
             print(f"******* epoch {epoch_i} *********")
+            start = time.process_time()
             # 一次训练
             MSE_per_batch = self.run_one_epoch(mode=mode, dataset_name=dataset_name)
             print("epoch结束，开始Loss计算")
@@ -149,11 +148,11 @@ class Exp:
             total_loss = torch.mean(MSE_per_batch)
             MSE_per_epoch[epoch_i] = total_loss
             # 记录结果
-            print("计算loss结束，log记录结果")
-            self.logger.log_metrics({
-                f"MSE_{dataset_name}": MSE_per_epoch[epoch_i],
-                f"MSE_dB_{dataset_name}": 10 * torch.log10(MSE_per_epoch[epoch_i]),
-            }, epoch=epoch_i)
+            # print("计算loss结束，log记录结果")
+            # self.logger.log_metrics({
+            #     f"MSE_{dataset_name}": MSE_per_epoch[epoch_i],
+            #     f"MSE_dB_{dataset_name}": 10 * torch.log10(MSE_per_epoch[epoch_i]),
+            # }, epoch=epoch_i)
 
             # 保存模型
             if mode == "train":
@@ -171,31 +170,27 @@ class Exp:
                     }
                     self.save_checkpoints(name=checkpoint_name, content=checkpoint_content)
             epoch_i += 1
+            end = time.process_time()
+
+            print("耗时：",end-start, "s")
 
 
     def run_one_epoch(self, mode="test", dataset_name="test"):
         iter_num = self.dataset_size_dict[dataset_name] // self.batch_size
         MSE_per_batch = torch.empty([iter_num])
-        print("开始本次epoch，开始初始化")
+
         for data_i, data in enumerate(self.dataloader_dict[dataset_name]):
             # 基本变量读取
-            print("进入dataloader for循环")
             (batch_size, T, n) = data["z"].shape
             self.model.batch_size = batch_size
             x_ekf = torch.empty([batch_size, T, self.m])
-            print("x_ekf创建完成")
-            x_true = data["x"].cuda()
-            z = data["z"].cuda()
-            device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-            self.model.to(device)
-            print("数据搬运到GPU完成")
+
+            x_true = data["x"].to(self.device, non_blocking=True)
+            z = data["z"].to(self.device, non_blocking=True)
             if self.model_name == "KNet":
-                print("开始初始化")
                 self.model.init_hidden()
                 self.model.InitSequence()
-                print("初始化完成")
                 self.model.forward(z)
-                print("模型forward完成")
                 # with torch.profiler.profile(
                 #         activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA],
                 #         #activities=[ProfilerActivity.CUDA],
