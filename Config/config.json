@@ -14,7 +14,7 @@
       "name": "CyclicLR",
       "params": {
         "base_lr" : 1e-10,
-        "max_lr": 1e-8,
+        "max_lr": 1e-9,
         "cycle_momentum": false
       }
     }
@@ -42,7 +42,9 @@
     }
   },
   "dataloader_params": {
-    "batch_size": 32,
+    "batch_size": 64,
+    "num_workers": 0,
+    "pin_memory": false,
     "drop_last": true,
     "shuffle": false
   },
@@ -51,7 +53,7 @@
     "measurement": 3
   },
   "Motion model": {
-    "q": 1e-3
+    "q": 1e-2
   },
   "Observation model": {
     "r": 0.1

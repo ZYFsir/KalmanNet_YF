@@ -24,8 +24,9 @@ torch.set_printoptions(precision=12)
 if __name__ == "__main__":
     print_now_time()
 
-    experiment = Exp()
-    experiment.run(mode="train", dataset_name="train")
+    experiment = Exp("KNet")
+    # experiment.run(mode="test", dataset_name="train")
+    experiment.test("train")
 
     #     if epoch_i % 2 == 0:
     #         # 计算当前的模型数量

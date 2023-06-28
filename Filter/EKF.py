@@ -17,9 +17,32 @@ class ExtendedKalmanFilter(torch.nn.Module):
     # 定义输入（测量值）为z，维度为m
     # 状态为x，维度为n
 
-    def __init__(self, SystemModel, mode='full'):
+    def __init__(self):
         super().__init__()
+        self.f = None  # 运动模型
+        self.f_batch = None
+        self.m = None  # 输入维度（测量值维度）
+        self.Q = None  # 运动模型噪声
 
+        # Has to be transformed because of EKF non-linearity
+        self.h = None
+        self.h_batch = None
+        self.n = None  # 状态维度
+        self.R = None  # 测量噪声
+
+        self.m1x_prior_list = []
+        self.m1x_posterior_list = []
+
+        # self.KG_array = torch.zeros([batch_size, self.n, self.m])
+        self.m1x_0 = None
+        self.m1x_posterior = None
+        self.m2x_0 = None
+        self.inverse_batch = None
+        # Full knowledge about the model or partial? (Should be made more elegant)
+        self.fString = None
+        self.hString = None
+
+    def set_ssmodel(self, SystemModel, mode='full'):
         self.f = SystemModel.f  # 运动模型
         self.f_batch = vmap(self.f)
         self.m = SystemModel.m  # 输入维度（测量值维度）
