@@ -1,0 +1,13 @@
+resume : False       # True to resume trial, False to start a new trial,
+
+# model
+model_name: 'KalmanNet'
+target_state_dim : 6
+measurement_dim : 3
+in_mult : 5
+out_mult : 50
+
+
+batch_size : 4
+
+optimizer_name: SGD

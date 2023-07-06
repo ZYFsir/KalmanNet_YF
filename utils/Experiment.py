@@ -1,6 +1,5 @@
-from comet_ml import Experiment
 import os
-
+import yaml
 import torch
 from torch import nn
 from utils.torchSettings import get_torch_device, get_config
@@ -12,57 +11,25 @@ from Filter.KalmanNet import KalmanNet
 from Filter.singer_EKF import init_SingerModel
 from Filter.EKF import ExtendedKalmanFilter
 
-class Exp:
-    def __init__(self, model_name="KNet"):
+
+class Experiment:
+    def __init__(self, config):
+        self.config = config
+
         self.device = get_torch_device()
-        self.config = get_config()
 
-        model_name_list = ["KNet", "EKF"]
-        if model_name not in model_name_list:
-            print("model_name is invalid!")
-            exit()
-        self.model_name = model_name
+        self.model = self.create_model_by_name(self.config.model_name)
+        self.optimizer = self.create_optimizer_by_name(self.config.optimizer_name)
 
-        # config变量读取
-        self.m = self.config["dim"]["state"]
-        self.n = self.config["dim"]["measurement"]
+        self.optimizer = self.create_optimizer_by_name(self.config, self.model.parameters)
 
-        self.batch_size = self.config["dataloader_params"]["batch_size"]
-        self.max_checkpoint_num = self.config["max_checkpoint_num"]
-        self.epoch = self.config["training"]["epoch"]
-        self.use_comet = self.config["use_comet"]
-
-        if self.model_name == "KNet":
-            # 名称与函数的对应字典
-            self.optimizer_config_dict = {
-                "AdamW": torch.optim.AdamW,
-                "SGD":torch.optim.SGD,
-                "ASGD": torch.optim.ASGD
-            }
-            self.scheduler_config_dict = {
-                "CyclicLR": torch.optim.lr_scheduler.CyclicLR,
-                "ReduceLROnPlateau":torch.optim.lr_scheduler.ReduceLROnPlateau
-            }
-
-        self.loss_fn = nn.MSELoss(reduction="none")
-        self.log_module(self.config["use_comet"])
+        self.loss_function = nn.MSELoss(reduction="none")
+        self.logger =
         self.datasets_module()
-        self.model_module(model_name)
-        if self.model_name == "KNet":
-            self.train_module()
-            self.load_checkpoints()
 
-    def log_module(self, use_comet = True):
-        # Logger创建
-        if use_comet == True:
-            self.logger = Experiment(
-                api_key="0mjX0DZYgTf8rERcUWj7Jo1q1",
-                project_name="KalmanNet_Project",
-                workspace="zyfsir",
-            )
-            self.logger.log_parameters(self.config)
-        else:
-            pass
+        self.train_module()
+        self.load_checkpoints()
+
 
     def datasets_module(self):
         # 数据集加载
@@ -114,13 +81,13 @@ class Exp:
                 self.model.parameters(), **self.config["training"]["optimizer"]["params"])
         else:
             self.optimizer = self.optimizer_config_dict[self.config["training"]
-                                                        ["optimizer"]["name"]](self.model.parameters())
+            ["optimizer"]["name"]](self.model.parameters())
         if "params" in self.config["training"]["scheduler"]:
             self.scheduler = self.scheduler_config_dict[self.config["training"]["scheduler"]["name"]](
                 self.optimizer, **self.config["training"]["scheduler"]["params"])
         else:
             self.scheduler = self.scheduler_config_dict[self.config["training"]
-                                                        ["scheduler"]["name"]](self.optimizer)
+            ["scheduler"]["name"]](self.optimizer)
 
     def run(self, mode="test", dataset_name="test"):
         if mode == "train":
@@ -138,7 +105,7 @@ class Exp:
             print(f"Exp datase_name {dataset_name} invalid")
             raise
 
-        iter_num = self.dataset_size_dict[dataset_name]//self.batch_size
+        iter_num = self.dataset_size_dict[dataset_name] // self.batch_size
         MSE_per_epoch = torch.empty([self.epoch])
 
         while epoch_i < epoch:
@@ -153,7 +120,7 @@ class Exp:
                     loss_point = self.run_one_epoch(mode=mode, dataset_name="train")
 
             loss_trajs_in_iter = torch.mean(
-                loss_point, dim=(1, 2)) # [batch_size]
+                loss_point, dim=(1, 2))  # [batch_size]
             loss = torch.mean(loss_trajs_in_iter)
             MSE_per_epoch[epoch_i] = loss
 
@@ -162,18 +129,18 @@ class Exp:
             if mode == "train":
                 self.logger.log_metrics({
                     f"MSE_{dataset_name}": MSE_per_epoch[epoch_i],
-                    "MSE_dB_{dataset_name}": 10*torch.log10(MSE_per_epoch[epoch_i]),
+                    "MSE_dB_{dataset_name}": 10 * torch.log10(MSE_per_epoch[epoch_i]),
                 }, epoch=epoch_i)
             elif mode == "test":
-                print("test loss:",MSE_per_epoch[epoch_i])
+                print("test loss:", MSE_per_epoch[epoch_i])
 
             # 保存模型
             if mode == "train":
                 if epoch_i % 5 == 0:
                     MSE_test = self.run_one_epoch(mode="test", dataset_name="test")
                     loss_test = torch.mean(MSE_test)
-                    checkpoint_name = self.config["checkpoints_saving_folder"]+\
-                        f"/{MSE_per_epoch[epoch_i]}_dB_epoch{epoch_i}_KalmanNet.pt"
+                    checkpoint_name = self.config["checkpoints_saving_folder"] + \
+                                      f"/{MSE_per_epoch[epoch_i]}_dB_epoch{epoch_i}_KalmanNet.pt"
                     checkpoint_content = {
                         'epoch': epoch_i,
                         'model_state_dict': self.model.state_dict(),
@@ -191,7 +158,7 @@ class Exp:
         if dataset_name not in self.dataloader_dict:
             print(f"Exp datase_name {dataset_name} invalid")
             raise
-        trajs_num = self.dataset_size_dict[dataset_name]//self.batch_size * self.batch_size
+        trajs_num = self.dataset_size_dict[dataset_name] // self.batch_size * self.batch_size
         T = self.dataloader_dict[dataset_name].dataset.length
         loss = torch.empty([trajs_num, T, 2])
 
@@ -211,16 +178,16 @@ class Exp:
                     self.model.InitSequence()
                     for t in range(0, T):
                         m1x_posterior = self.model.forward(z[:, t, :])
-                        x_ekf[:, t, :] = m1x_posterior.squeeze(2)[:,0:3]
+                        x_ekf[:, t, :] = m1x_posterior.squeeze(2)[:, 0:3]
                 elif self.model_name == "EKF":
                     self.model.InitSequence(singer_model.m1x_0, singer_model.m2x_0)
                     x_ekf = self.model.forward(z)
 
                 # 求loss
-                loss_points = self.loss_fn(x_true, x_ekf[:, :, 0:2])
-                loss[data_i * self.batch_size:(data_i+1) * self.batch_size, :,:] = loss_points
+                loss_points = self.loss_function(x_true, x_ekf[:, :, 0:2])
+                loss[data_i * self.batch_size:(data_i + 1) * self.batch_size, :, :] = loss_points
             # 记录结果
-            print("test loss:",torch.mean(loss))
+            print("test loss:", torch.mean(loss))
             torch.save(loss, f"Result/test_loss/{self.model_name}_{dataset_name}_loss.pt")
 
     def run_one_epoch(self, mode="test", dataset_name="test"):
@@ -250,7 +217,7 @@ class Exp:
                 x_ekf = self.model.forward(z)
 
             # 求loss
-            loss_elements_in_iter = self.loss_fn(x_true, x_ekf[:, :, 0:2])
+            loss_elements_in_iter = self.loss_function(x_true, x_ekf[:, :, 0:2])
             loss_trajs_in_iter = torch.mean(
                 loss_elements_in_iter, dim=(1, 2))
             loss_batch_in_iter = torch.mean(loss_trajs_in_iter)
@@ -262,7 +229,7 @@ class Exp:
                 self.optimizer.step()
                 # self.scheduler.step(loss_batch_in_iter)
                 self.scheduler.step()
-            MSE_per_batch[data_i] =  loss_batch_in_iter.item()
+            MSE_per_batch[data_i] = loss_batch_in_iter.item()
             # MSE_dB_trainset_singledata[data_i] = 10 * \
             #     torch.log10(torch.mean(loss_element)).item()
             # print(
@@ -292,3 +259,18 @@ class Exp:
         print("保存模型")
         torch.save(content, name)
 
+    def create_model_by_name(self, model_name):
+        if model_name == "KalmanNet":
+            model = KalmanNet(self.config.in_mult, self.config.out_mult,
+                              self.config.target_state_dim, self.config.measurement_dim, self.config.batch_size,
+                              self.device)
+        else:
+            print("model_name is invalid")
+            raise
+
+    def create_optimizer_by_name(self, name, parameters):
+        if name == "SGD":
+            optimizer = torch.optim.SGD(parameters, lr=1e-5)
+        else:
+            print("optimizer_name is invalid")
+            raise
