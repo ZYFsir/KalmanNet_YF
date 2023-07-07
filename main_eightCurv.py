@@ -27,6 +27,6 @@ if __name__ == "__main__":
 
     config = Config('src/config/exp01_kalmanNet.yaml')
     experiment = Experiment(config)
-    # experiment.run(mode="test", dataset_name="train")
-    experiment.test("train")
+    experiment.set_dataloader('cv')
+    experiment.train()
 

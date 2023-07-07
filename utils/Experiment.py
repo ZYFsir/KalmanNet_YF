@@ -1,5 +1,4 @@
 import os
-import yaml
 import torch
 from torch import nn
 from utils.torchSettings import get_torch_device, get_config
@@ -12,25 +11,51 @@ from Filter.singer_EKF import init_SingerModel
 from Filter.EKF import ExtendedKalmanFilter
 
 
+def exist_trial(trial_folder):
+    model_folder = os.path.join(trial_folder, "model_backups")
+    if os.path.exists(model_folder):
+        files = os.listdir(model_folder)
+        checkpoint_files = [x for x in files if ".pt" in x]
+        if len(checkpoint_files) > 0:
+            return True
+        else:
+            return False
+    else:
+        return False
+
+
+def mkdir(path):
+    if os.path.isdir(path):
+        pass
+    else:
+        os.makedirs(path)
+
+
 class Experiment:
     def __init__(self, config):
+        self.experiments_root = "experiments"
+        self.loss_function = nn.MSELoss(reduction="none")
+
         self.config = config
 
         self.device = get_torch_device()
 
         self.model = self.create_model_by_name(self.config.model_name)
-        self.optimizer = self.create_optimizer_by_name(self.config.optimizer_name)
+        self.optimizer = self.create_optimizer_by_name(self.config.optimizer_name, self.model.parameters())
 
-        self.optimizer = self.create_optimizer_by_name(self.config, self.model.parameters)
+        self.trial_folder = os.path.join(self.experiments_root, self.config.experiment_name, self.config.trial_name)
+        if exist_trial(self.trial_folder):
+            self.load_checkpoints(self.trial_folder)
+        else:
+            self.create_experiment_log_dir(self.config.experiment_name, self.config.trial_name)
 
-        self.loss_function = nn.MSELoss(reduction="none")
-        self.logger =
-        self.datasets_module()
-
-        self.train_module()
-        self.load_checkpoints()
-
-
+    def set_dataloader(self, dataset_name):
+        if dataset_name in self.config.dataset:
+            dataset = TDOADataset(self.config.dataset[dataset_name])
+            dataloader = DataLoader(dataset, self.config.batch_size)
+        else:
+            print("dataset name invalid")
+            raise
     def datasets_module(self):
         # 数据集加载
         self.dataloader_dict = {}
@@ -52,73 +77,30 @@ class Experiment:
             ekf = ExtendedKalmanFilter()
         self.model = ekf.to(self.device)
 
-    def load_checkpoints(self):
-        # 读取最优checkpoints
-        if not os.path.exists(self.config["checkpoints_saving_folder"]):
-            os.makedirs(self.config["checkpoints_saving_folder"])
-            return
-        files = os.listdir(self.config["checkpoints_saving_folder"])
-        checkpoint_files = [x for x in files if "KalmanNet.pt" in x]
-        if not checkpoint_files:
-            return
+    def load_checkpoints(self, folder):
+        files = os.listdir(folder)
+        checkpoint_files = [x for x in files if ".pt" in x]
         checkpoint_files = sorted(
             checkpoint_files, key=lambda x: float(x.split("_")[0]))
         checkpoint_rewind = torch.load(
-            os.path.join(self.config["checkpoints_saving_folder"], checkpoint_files[0]), map_location=self.device)
+            os.path.join(folder, checkpoint_files[0]), map_location=self.device)
         self.epoch_i = checkpoint_rewind["epoch"]
         self.model.load_state_dict(checkpoint_rewind["model_state_dict"])
         self.optimizer.load_state_dict(
             checkpoint_rewind["optimizer_state_dict"])
 
-    def train_module(self):
-        """
-        对训练有关的变量、对象进行初始化和构造
-        """
-        self.epoch_i = 0
-        # 初始化optimizer和scheduler
-        if "params" in self.config["training"]["optimizer"]:
-            self.optimizer = self.optimizer_config_dict[self.config["training"]["optimizer"]["name"]](
-                self.model.parameters(), **self.config["training"]["optimizer"]["params"])
-        else:
-            self.optimizer = self.optimizer_config_dict[self.config["training"]
-            ["optimizer"]["name"]](self.model.parameters())
-        if "params" in self.config["training"]["scheduler"]:
-            self.scheduler = self.scheduler_config_dict[self.config["training"]["scheduler"]["name"]](
-                self.optimizer, **self.config["training"]["scheduler"]["params"])
-        else:
-            self.scheduler = self.scheduler_config_dict[self.config["training"]
-            ["scheduler"]["name"]](self.optimizer)
+    def train(self):
+        epoch_i = self.epoch_i
+        epoch = self.epoch
+        self.model.train()
 
-    def run(self, mode="test", dataset_name="test"):
-        if mode == "train":
-            epoch_i = self.epoch_i
-            epoch = self.epoch
-            self.model.train()
-        elif mode == "test":
-            epoch_i = 0
-            epoch = 1
-            self.model.eval()
-        else:
-            print(f"Exp run mode {mode} invalid")
-            raise
-        if dataset_name not in self.dataloader_dict:
-            print(f"Exp datase_name {dataset_name} invalid")
-            raise
-
-        iter_num = self.dataset_size_dict[dataset_name] // self.batch_size
+        iter_num = self.dataset_size_dict[] // self.batch_size
         MSE_per_epoch = torch.empty([self.epoch])
 
         while epoch_i < epoch:
             print(f"******* epoch {epoch_i} *********")
             # 一次训练，返回的loss尺寸未经任何压缩,[batchsize, T-length, xy]
-            if mode == "train":
-                loss_point = self.run_one_epoch(mode=mode, dataset_name="train")
-            elif mode == "test":
-                # trajs_num = self.dataset_size_dict[dataset_name] // self.batch_size * self.batch_size
-                # loss_trajs_list = np.zeros([trajs_num])
-                with torch.no_grad():
-                    loss_point = self.run_one_epoch(mode=mode, dataset_name="train")
-
+            loss_point = self.run_one_epoch(mode=mode, dataset_name="train")
             loss_trajs_in_iter = torch.mean(
                 loss_point, dim=(1, 2))  # [batch_size]
             loss = torch.mean(loss_trajs_in_iter)
@@ -267,6 +249,7 @@ class Experiment:
         else:
             print("model_name is invalid")
             raise
+        return model
 
     def create_optimizer_by_name(self, name, parameters):
         if name == "SGD":
@@ -274,3 +257,13 @@ class Experiment:
         else:
             print("optimizer_name is invalid")
             raise
+
+    def create_experiment_log_dir(self, experiment_name, trial_name):
+
+        trial_dir = os.path.join(self.experiments_root, experiment_name, trial_name)
+
+        sub_folders = {"model_backups":None, "results":None, "tensorboard logs":None}
+        for key in sub_folders.keys():
+            sub_folders[key] = os.path.join(trial_dir, key)
+            mkdir(sub_folders[key])
+

@@ -1,4 +1,6 @@
-resume : False       # True to resume trial, False to start a new trial,
+# experiments log
+experiment_name : 'exp01_kalmanNet'
+trial_name : '01'
 
 # model
 model_name: 'KalmanNet'
@@ -11,3 +13,6 @@ out_mult : 50
 batch_size : 4
 
 optimizer_name: SGD
+
+dataset:
+  cv : 'data/processed/cv'
