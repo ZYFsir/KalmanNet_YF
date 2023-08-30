@@ -4,7 +4,8 @@ import scipy.io as io
 import numpy as np
 import torch
 # 设置
-path = "../Simulations/MatlabSet/train/SNR5_N161"
+path = "../../data/raw/SNR5_N161/train_3800"
+print(f"matlab数据集路径：{path}")
 # 读取所有数据
 def file_filter(f):
     if f[-4:] in ['.mat']:
@@ -15,6 +16,7 @@ def file_filter(f):
 files = os.listdir(path)
 files = list(filter(file_filter, files))
 N = len(files)
+print(f"共计{N}条数据")
 for idx in range(0, N):
     data = io.loadmat(os.path.join(path, files[idx]), mat_dtype=False)
     if idx == 0:
@@ -23,5 +25,11 @@ for idx in range(0, N):
         target = torch.zeros((N, T, 2))
     input[idx, :, :] = torch.Tensor(data['test_tdoa'])
     target[idx, :, :] = torch.Tensor(data["test_data"][:,0:2])
-torch.save({"input":input,"target":target}
-           ,"../Dataset/trainset.pt")
+station = torch.Tensor(data["test_station"])
+station = torch.reshape(station,[4,3])
+h = torch.FloatTensor([data["test_data"][0,-1]])
+
+target_path = "../../data/processed/train_3800.pt"
+torch.save({"input":input,"target":target, "station":station, "h":h}
+           ,target_path)
+print(f"处理完毕，已存储到{target_path}")
