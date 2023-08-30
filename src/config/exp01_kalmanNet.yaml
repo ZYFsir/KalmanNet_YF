@@ -1,0 +1,24 @@
+# experiments log
+experiment_name : 'exp01_kalmanNet'
+trial_name : '02'
+epoch : 500
+
+# deep model
+model_name: 'KalmanNet'
+target_state_dim : 6
+measurement_dim : 3
+in_mult : 20
+out_mult : 60
+
+# ssmodel
+observation_noise : 100
+init_state_mean : [[10000], [100000], [0], [0], [0], [0]]
+init_state_covariance_scaling : 1
+
+# train method
+batch_size : 64
+optimizer_name: Adam
+backward_sequence_length : 1
+
+dataset:
+  train : 'data/processed/train_3800.pt'
