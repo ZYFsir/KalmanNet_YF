@@ -184,7 +184,7 @@ class Experiment:
             hidden_states = None
             self.initialize_model_beliefs(batch_size)
             backward_sequence_length = self.config.backward_sequence_length
-            for t in range(0, inputs.size(1), backward_sequence_length):
+            for t in range(0, inputs.size(2), backward_sequence_length):
                 outputs, hidden_states = self.model(inputs[:,:, t:t + backward_sequence_length], hidden_states, station, h)
                 loss = self.loss_function(outputs[:,0:2,:], targets[:,:,t:t + backward_sequence_length])
                 loss.backward(retain_graph = True)
