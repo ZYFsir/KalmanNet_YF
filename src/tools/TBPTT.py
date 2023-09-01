@@ -1,7 +1,6 @@
 import torch
 from torch import nn
 import time
-from torchviz import make_dot
 
 class TBPTT():
     def __init__(self, one_step_module, loss_module, k1, k2, optimizer):

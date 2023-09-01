@@ -1,6 +1,5 @@
 import torch
 from functorch import jacrev
-from overrides import overrides
 from torch import vmap
 from torch import autograd, nn
 import torch.nn.functional as func

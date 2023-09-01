@@ -41,7 +41,7 @@ def get_batchsize_from_dataloader(dataloader):
 
 class Experiment:
     def __init__(self, config):
-        self.max_checkpoint_num = 30
+        self.max_checkpoint_num = 5
         self.experiments_root = "experiments"
         self.sub_folders = {
             "model_backups": None,
@@ -112,7 +112,7 @@ class Experiment:
                 self.logger.add_scalar("MSE per epoch", loss, epoch)
 
                 # 保存模型
-                if epoch % 50 == 0:
+                if epoch % self.config.save_every_epoch == 0:
                     self.save_checkpoint(dataloader, epoch, loss)
 
                 # 更新进度条
@@ -257,10 +257,6 @@ class Experiment:
         if model_name == "KalmanNet":
             model = KalmanNet(self.config.in_mult, self.config.out_mult,
                               self.config.target_state_dim, self.config.measurement_dim, self.device)
-        elif model_name == "KalmanNet2":
-            model = KalmanNet2(self.config.in_mult, self.config.out_mult,
-                              self.config.target_state_dim, self.config.measurement_dim, self.config.batch_size,
-                              self.device)
         else:
             print("model_name is invalid")
             raise
@@ -268,9 +264,9 @@ class Experiment:
 
     def create_optimizer_by_name(self, name, parameters):
         if name == "SGD":
-            optimizer = torch.optim.SGD(parameters, lr=1e-3)
+            optimizer = torch.optim.SGD(parameters, lr=self.config.learning_rate)
         elif name == "Adam":
-            optimizer = torch.optim.Adam(parameters, lr=1e-2)
+            optimizer = torch.optim.Adam(parameters, lr=self.config.learning_rate)
         else:
             print("optimizer_name is invalid")
             raise
