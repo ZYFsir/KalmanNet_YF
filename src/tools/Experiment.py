@@ -171,7 +171,7 @@ class Experiment:
         self.model.train()
 
         total_loss = 0
-        for data_i, batch in enumerate(dataloader):
+        for data_i, batch in tqdm(enumerate(dataloader)):
             batch = move_to_cuda(batch, self.device)
             inputs, targets, station, h = batch
             h = torch.Tensor(h).cuda()
@@ -184,7 +184,7 @@ class Experiment:
             hidden_states = None
             self.initialize_model_beliefs(batch_size)
             backward_sequence_length = self.config.backward_sequence_length
-            for t in range(0, inputs.size(2), backward_sequence_length):
+            for t in tqdm(range(0, inputs.size(2), backward_sequence_length)):
                 outputs, hidden_states = self.model(inputs[:,:, t:t + backward_sequence_length], hidden_states, station, h)
                 loss = self.loss_function(outputs[:,0:2,:], targets[:,:,t:t + backward_sequence_length])
                 loss.backward(retain_graph = True)
@@ -240,9 +240,9 @@ class Experiment:
         files = os.listdir(
             self.sub_folders["model_backups"])
         checkpoint_files = [
-            x for x in files if "KalmanNet.pt" in x]
+            x for x in files if "KalmanNet" in x]
         checkpoint_files = sorted(
-            checkpoint_files, key=lambda x: float(x.split("_")[0]))
+            checkpoint_files, key=lambda x: float(x.split("_")[2]))
         checkpoint_count = len(checkpoint_files)
         # 清除过多保存的模型
         if checkpoint_count > self.max_checkpoint_num:

@@ -95,9 +95,10 @@ class KalmanGainPredictor(nn.Module):
             hidden_in['Sigma'] = self.init_h_Sigma.unsqueeze(0).repeat(batch_size,1)
             hidden_in['S'] = self.init_h_S.unsqueeze(0).repeat(batch_size,1)
         hidden_out = {}
+        # obs_diff, obs_innovation_diff, fw_evol_diff, fw_update_diff = [
+        #     torch.tensor(data).to(torch.float32).squeeze(2) for data in x]
         obs_diff, obs_innovation_diff, fw_evol_diff, fw_update_diff = [
-            torch.tensor(data).to(torch.float32).squeeze(2) for data in x]
-
+            data.squeeze(2) for data in x]
         ####################
         ### Forward Flow ###
         ####################
