@@ -18,3 +18,12 @@ class SingerMovementModel(nn.Module):
         # F3[2, :] = torch.tensor([0, 0, 0, 0, 0, 0, 0, 0, 0])
         F = torch.vstack((F1, F2, F3))
         return torch.matmul(F, x)
+
+if __name__ == "__main__":
+    model = SingerMovementModel()
+    x = nn.Parameter(torch.rand([6,6]))
+    y = model(x)
+    target = torch.rand([6,6])
+    loss_fn = nn.MSELoss()
+    loss = loss_fn(y,target)
+    loss.backward()

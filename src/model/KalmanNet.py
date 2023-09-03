@@ -90,17 +90,16 @@ class KalmanNet(nn.Module):
 
         # Step 2: Kalman Gain Prediction
         kalman_gain, updated_hidden_states = self.compute_kalman_gain(observation, hidden_states)
-
         # Step 3: Measurement Innovation
         self.innovation(observation)
 
         # Step 4: State Correction
         self.correct(kalman_gain)
 
-        self.y_previous = observation
-        self.filtered_state_previous_2_step = self.filtered_state_previous_1_step
-        self.filtered_state_previous_1_step = self.filtered_state
-        self.predicted_state_prior_previous_1_step = self.predicted_state_prior
+        self.y_previous = observation.data
+        self.filtered_state_previous_2_step = self.filtered_state_previous_1_step.data
+        self.filtered_state_previous_1_step = self.filtered_state.data
+        self.predicted_state_prior_previous_1_step = self.predicted_state_prior.data
 
         return self.filtered_state, updated_hidden_states
 

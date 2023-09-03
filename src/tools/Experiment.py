@@ -11,7 +11,7 @@ from src.model.singer_EKF import init_SingerModel
 from src.model.EKF import ExtendedKalmanFilter
 from torch.utils.tensorboard import SummaryWriter
 from src.tools.TBPTT import TBPTT
-from src.tools.utils import expand_to_batch, move_to_cuda
+from src.tools.utils import expand_to_batch, move_to_cuda, state_detach
 
 def exist_trial(trial_folder):
     model_folder = os.path.join(trial_folder, "model_backups")
@@ -102,7 +102,7 @@ class Experiment:
 
     def train(self, dataloader):
         num_epochs = self.config.epoch
-        with tqdm(range(self.experiment_start_epoch, num_epochs + 1), desc="Training", total=num_epochs) as progess_bar:
+        with tqdm(range(self.experiment_start_epoch, num_epochs + 1), desc="Epochs", leave=True,total=num_epochs) as progess_bar:
             progess_bar.update(self.experiment_start_epoch)
             for epoch in range(self.experiment_start_epoch, num_epochs + 1):
                 # 一次训练，返回的loss尺寸未经任何压缩,[batchsize, T-length, xy]
@@ -170,29 +170,53 @@ class Experiment:
     def train_one_epoch(self, dataloader):
         self.model.train()
 
-        total_loss = 0
-        for data_i, batch in tqdm(enumerate(dataloader)):
-            batch = move_to_cuda(batch, self.device)
-            inputs, targets, station, h = batch
-            h = torch.Tensor(h).cuda()
-            inputs = inputs.transpose(1,2).contiguous()
-            targets = targets.transpose(1,2).contiguous()
-            batch_size = inputs.size(0)
 
-            self.optimizer.zero_grad()
-            accumulated_loss = 0
-            hidden_states = None
-            self.initialize_model_beliefs(batch_size)
-            backward_sequence_length = self.config.backward_sequence_length
-            for t in tqdm(range(0, inputs.size(2), backward_sequence_length)):
-                outputs, hidden_states = self.model(inputs[:,:, t:t + backward_sequence_length], hidden_states, station, h)
-                loss = self.loss_function(outputs[:,0:2,:], targets[:,:,t:t + backward_sequence_length])
-                loss.backward(retain_graph = True)
-                accumulated_loss += loss
+        datasize = get_datasize_from_dataloader(dataloader)
+        batch_size = get_batchsize_from_dataloader(dataloader)
+        with tqdm(range(datasize), desc="dataset", position=1) as data_progress_bar:
+            for data_i, batch in enumerate(dataloader):
+                batch = move_to_cuda(batch, self.device)
+                inputs, targets, station, h = batch
+                h = torch.Tensor(h).cuda()
+                inputs = inputs.transpose(1, 2).contiguous()
+                targets = targets.transpose(1, 2).contiguous()
+                batch_size = inputs.size(0)
 
-            self.optimizer.step()
+                self.optimizer.zero_grad()
+                accumulated_loss = 0
+                hidden_in_states = None
+                with torch.no_grad():
+                    self.initialize_model_beliefs(batch_size)
 
-            total_loss += accumulated_loss.item()
+                hidden_list = []
+                hidden_list.append(hidden_in_states)
+                total_loss = 0
+                for t in range(0, inputs.size(2)):
+                    outputs, hidden_out_states = self.model(inputs[:, :, t:t + 1], hidden_in_states,
+                                                            station, h)
+                    hidden_list.append(hidden_out_states)
+                    loss = self.loss_function(outputs[:, 0:2, :], targets[:, :, t:t + 1])
+                    accumulated_loss = accumulated_loss + loss  # 此处不可用+=，因为inplace操作会影响计算图
+                    total_loss = total_loss + loss.item()
+
+                    if (t + 1) % self.config.backward_sequence_length == 0:
+                        # Perform a backward pass and update gradients every 10 time steps
+                        self.optimizer.zero_grad()
+                        accumulated_loss.backward()
+                        self.optimizer.step()
+                        accumulated_loss = 0
+                        hidden_in_states = state_detach(hidden_list[-1])
+                    else:
+                        hidden_in_states = hidden_list[-1]
+
+                # Perform a final backward pass and update gradients for any remaining accumulated loss
+                if accumulated_loss.item() > 0:
+                    self.optimizer.zero_grad()
+                    accumulated_loss.backward()
+                    self.optimizer.step()
+
+                data_progress_bar.set_postfix({"loss":total_loss/batch_size/inputs.size(2)})
+                data_progress_bar.update(batch_size)
 
         return total_loss / len(dataloader)
 

@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 from src.tools.neural_network_utils import create_fully_connected
+from src.tools.utils import state_detach
 
 
 def init_gru_parameters(gru_module):
@@ -91,9 +92,9 @@ class KalmanGainPredictor(nn.Module):
         if hidden_in == None:
             batch_size = x[0].shape[0]
             hidden_in = {}
-            hidden_in['Q'] = self.init_h_Q.unsqueeze(0).repeat(batch_size,1)
-            hidden_in['Sigma'] = self.init_h_Sigma.unsqueeze(0).repeat(batch_size,1)
-            hidden_in['S'] = self.init_h_S.unsqueeze(0).repeat(batch_size,1)
+            hidden_in['Q'] = self.init_h_Q.unsqueeze(0).repeat(batch_size,1).data
+            hidden_in['Sigma'] = self.init_h_Sigma.unsqueeze(0).repeat(batch_size,1).data
+            hidden_in['S'] = self.init_h_S.unsqueeze(0).repeat(batch_size,1).data
         hidden_out = {}
         # obs_diff, obs_innovation_diff, fw_evol_diff, fw_update_diff = [
         #     torch.tensor(data).to(torch.float32).squeeze(2) for data in x]
@@ -154,3 +155,18 @@ class KalmanGainPredictor(nn.Module):
         hidden_out["Sigma"] = out_FC4
         return out_FC2, hidden_out
 
+if __name__ == "__main__":
+    model = KalmanGainPredictor(3,6,20,60)
+    x = [torch.rand([4, 3, 1]), torch.rand([4, 3, 1]),torch.rand([4, 6, 1]),torch.rand([4, 6, 1])]
+    hidden = None
+    y, hidden_out = model(x, hidden)
+    target = torch.rand([4,18])
+    loss_fn = nn.MSELoss()
+    loss = loss_fn(y,target)
+    loss.backward()
+
+    z, hidden_out_2 = model(x, state_detach(hidden_out))
+    loss_2 = loss_fn(z, target)
+    loss_2.backward()
+
+    print(hidden_out.grad)

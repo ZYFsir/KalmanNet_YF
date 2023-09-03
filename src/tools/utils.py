@@ -18,3 +18,10 @@ def move_to_cuda(batch, device):
         return [move_to_cuda(item, device) for item in batch]
     else:
         return batch
+
+def state_detach(state):
+    state_after_detach = {}
+    for k, v in state.items():
+        state_after_detach[k] = v.detach()
+        state_after_detach[k].requires_grad = True
+    return state_after_detach
