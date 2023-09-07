@@ -170,7 +170,7 @@ class Experiment:
     def train_one_epoch(self, dataloader):
         self.model.train()
 
-
+        total_loss = 0
         datasize = get_datasize_from_dataloader(dataloader)
         batch_size = get_batchsize_from_dataloader(dataloader)
         with tqdm(range(datasize), desc="dataset", position=1) as data_progress_bar:
@@ -190,14 +190,14 @@ class Experiment:
 
                 hidden_list = []
                 hidden_list.append(hidden_in_states)
-                total_loss = 0
+                single_data_loss = 0
                 for t in range(0, inputs.size(2)):
                     outputs, hidden_out_states = self.model(inputs[:, :, t:t + 1], hidden_in_states,
                                                             station, h)
                     hidden_list.append(hidden_out_states)
                     loss = self.loss_function(outputs[:, 0:2, :], targets[:, :, t:t + 1])
                     accumulated_loss = accumulated_loss + loss  # 此处不可用+=，因为inplace操作会影响计算图
-                    total_loss = total_loss + loss.item()
+                    single_data_loss = single_data_loss + loss.item()
 
                     if (t + 1) % self.config.backward_sequence_length == 0:
                         # Perform a backward pass and update gradients every 10 time steps
@@ -214,11 +214,11 @@ class Experiment:
                     self.optimizer.zero_grad()
                     accumulated_loss.backward()
                     self.optimizer.step()
-
-                data_progress_bar.set_postfix({"loss":total_loss/batch_size/inputs.size(2)})
+                average_single_data_loss = single_data_loss/(2*batch_size*inputs.size(2))
+                data_progress_bar.set_postfix({"loss":average_single_data_loss})
                 data_progress_bar.update(batch_size)
-
-        return total_loss / len(dataloader)
+                total_loss = total_loss + average_single_data_loss
+        return total_loss / (data_i+1)
 
         #
         #     # 基本变量读取

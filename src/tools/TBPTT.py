@@ -14,7 +14,7 @@ class TBPTT():
         # one_step_module parameters
         self.optimizer = optimizer
 
-    def train(self, input_sequence, init_state):
+    def train(self, inputs,targets, init_state):
         def state_detach(state):
             state_after_detach = {}
             for k, v in state.items():

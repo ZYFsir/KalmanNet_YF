@@ -16,13 +16,13 @@ init_state_mean : [[10000], [100000], [0], [0], [0], [0]]
 init_state_covariance_scaling : 1
 
 # train method
-learning_rate : 0.0001
-batch_size : 128
+learning_rate : 0.00001
+batch_size : 64
 optimizer_name: Adam
-backward_sequence_length : 200
+backward_sequence_length : 150
 
 # save checkpoints
-save_every_epoch : 20
+save_every_epoch : 10
 
 # dataset
 dataset:
