@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
-from src.tools.neural_network_utils import create_fully_connected
-from src.tools.utils import state_detach
+from tools.neural_network_utils import create_fully_connected
+from tools.utils import state_detach
 
 
 def init_gru_parameters(gru_module):

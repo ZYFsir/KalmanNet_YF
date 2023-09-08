@@ -84,6 +84,14 @@ class KalmanNet(nn.Module):
         self.state_mean = mean
         self.state_covariance = covariance
 
+        self.y_previous = None
+        self.predicted_state_prior = None
+        self.predicted_measurement = None
+        self.filtered_state = None
+        self.filtered_state_previous_1_step = None
+        self.filtered_state_previous_2_step = None
+        self.predicted_state_prior_previous_1_step = None
+
     def forward(self, observation, hidden_states, station, h):
         # Step 1: Prediction
         self.predicted_state_prior, self.predicted_measurement = self.predict(self.state_mean, station, h)

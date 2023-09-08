@@ -59,7 +59,6 @@ class Experiment:
 
 
 
-
     def _initialize_model_and_optimizer(self):
         model = self.create_model_by_name(self.config.model_name)
         optimizer = self.create_optimizer_by_name(self.config.optimizer_name, model.parameters())
@@ -69,7 +68,7 @@ class Experiment:
         trial_folder = os.path.join(self.experiments_root, self.config.experiment_name, self.config.trial_name)
         self.create_experiment_log_dir(self.config.experiment_name, self.config.trial_name)
         if exist_trial(trial_folder):
-            self.load_checkpoints(self.sub_folders["model_backups"])
+            self.load_checkpoints(self.sub_folders["model_backups"], self.config.checkpoint_name)
         else:
             self.experiment_start_epoch = 1
         return trial_folder
@@ -80,20 +79,16 @@ class Experiment:
     def get_dataloader(self, dataset_name):
         if dataset_name in self.config.dataset:
             dataset = TDOADataset(self.config.dataset[dataset_name])
-            dataloader = DataLoader(dataset, self.config.batch_size, num_workers=4, drop_last=True)
+            dataloader = DataLoader(dataset, self.config.batch_size, num_workers=4)
             return dataloader
         else:
             print("dataset name invalid")
             raise
 
 
-    def load_checkpoints(self, folder):
-        files = os.listdir(folder)
-        checkpoint_files = [x for x in files if ".pt" in x]
-        checkpoint_files = sorted(
-            checkpoint_files, key=lambda x: float(x.split("_")[2]))
+    def load_checkpoints(self, folder, file_name):
         checkpoint_rewind = torch.load(
-            os.path.join(folder, checkpoint_files[0]), map_location=self.device)
+            os.path.join(folder, file_name), map_location=self.device)
         self.experiment_start_epoch = checkpoint_rewind["epoch"]
         self.model.load_state_dict(checkpoint_rewind["model_state_dict"])
         # self.optimizer.load_state_dict(
@@ -130,42 +125,59 @@ class Experiment:
         self.validate_checkpoint_nums()
         torch.save(checkpoint_content, checkpoint_name)
 
-    def test(self, dataset_name):
+    def test(self, dataloader):
         self.model.eval()
-        if dataset_name not in self.dataloader_dict:
-            print(f"Exp datase_name {dataset_name} invalid")
-            raise
-        trajs_num = self.dataset_size_dict[dataset_name] // self.batch_size * self.batch_size
-        T = self.dataloader_dict[dataset_name].dataset.length
-        loss = torch.empty([trajs_num, T, 2])
+        total_loss = 0
+        datasize = get_datasize_from_dataloader(dataloader)
+        batch_size = get_batchsize_from_dataloader(dataloader)
+        with tqdm(range(datasize), desc="dataset", position=1) as data_progress_bar:
+            for data_i, batch in enumerate(dataloader):
+                batch = move_to_cuda(batch, self.device)
+                inputs, targets, station, h = batch
+                h = torch.Tensor(h).cuda()
+                inputs = inputs.transpose(1, 2).contiguous()
+                targets = targets.transpose(1, 2).contiguous()
+                batch_size = inputs.size(0)
 
-        with torch.no_grad():
-            for data_i, data in enumerate(self.dataloader_dict[dataset_name]):
-                if data_i == 0:
-                    singer_model = init_SingerModel(
-                        data["station"], data["h"], self.m, self.n, self.config["Observation model"]["r"], self.device)
-                    self.model.set_ssmodel(singer_model)
-                    self.model.to(self.device)
-                # 基本变量读取
-                x_ekf = torch.empty([self.batch_size, T, self.n])
-                x_true = data["x"].cuda()
-                z = data["z"].cuda()
-                if self.model_name == "KNet":
-                    self.model.init_hidden()
-                    self.model.InitSequence()
-                    for t in range(0, T):
-                        m1x_posterior = self.model.forward(z[:, t, :])
-                        x_ekf[:, t, :] = m1x_posterior.squeeze(2)[:, 0:3]
-                elif self.model_name == "EKF":
-                    self.model.InitSequence(singer_model.m1x_0, singer_model.m2x_0)
-                    x_ekf = self.model.forward(z)
+                self.optimizer.zero_grad()
+                accumulated_loss = 0
+                hidden_in_states = None
+                with torch.no_grad():
+                    self.initialize_model_beliefs(batch_size)
 
-                # 求loss
-                loss_points = self.loss_function(x_true, x_ekf[:, :, 0:2])
-                loss[data_i * self.batch_size:(data_i + 1) * self.batch_size, :, :] = loss_points
-            # 记录结果
-            print("test loss:", torch.mean(loss))
-            torch.save(loss, f"Result/test_loss/{self.model_name}_{dataset_name}_loss.pt")
+                hidden_list = []
+                hidden_list.append(hidden_in_states)
+                single_data_loss = 0
+                for t in range(0, inputs.size(2)):
+                    outputs, hidden_out_states = self.model(inputs[:, :, t:t + 1], hidden_in_states,
+                                                            station, h)
+                    hidden_list.append(hidden_out_states)
+                    loss = self.loss_function(outputs[:, 0:2, :], targets[:, :, t:t + 1])
+                    accumulated_loss = accumulated_loss + loss  # 此处不可用+=，因为inplace操作会影响计算图
+                    single_data_loss = single_data_loss + loss.item()
+
+                    if (t + 1) % self.config.backward_sequence_length == 0:
+                        # Perform a backward pass and update gradients every 10 time steps
+                        self.optimizer.zero_grad()
+                        accumulated_loss.backward()
+                        self.optimizer.step()
+                        accumulated_loss = 0
+                        hidden_in_states = state_detach(hidden_list[-1])
+                    else:
+                        hidden_in_states = hidden_list[-1]
+
+                # Perform a final backward pass and update gradients for any remaining accumulated loss
+                if accumulated_loss.item() > 0:
+                    self.optimizer.zero_grad()
+                    accumulated_loss.backward()
+                    self.optimizer.step()
+                average_single_data_loss = single_data_loss / (2 * batch_size * inputs.size(2))
+                data_progress_bar.set_postfix({"loss": average_single_data_loss})
+                data_progress_bar.update(batch_size)
+                total_loss = total_loss + average_single_data_loss
+        return total_loss / (data_i + 1)
+
+
 
     def train_one_epoch(self, dataloader):
         self.model.train()

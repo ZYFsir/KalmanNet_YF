@@ -1,7 +1,8 @@
 # experiments log
 experiment_name : 'exp01_kalmanNet'
 trial_name : '02'
-epoch : 2500
+epoch : 3000
+checkpoint_name : 'KalmanNet_train_1.5814213848429706_epoch_2500.pt'
 
 # deep model
 model_name: 'KalmanNet'
@@ -17,7 +18,7 @@ init_state_covariance_scaling : 1
 
 # train method
 learning_rate : 0.00001
-batch_size : 64
+batch_size : 32
 optimizer_name: Adam
 backward_sequence_length : 150
 

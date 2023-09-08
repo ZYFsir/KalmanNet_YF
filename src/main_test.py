@@ -13,6 +13,6 @@ if __name__ == "__main__":
     config = Config('src/config/exp01_kalmanNet.yaml')
     experiment = Experiment(config)
     dataloader = experiment.get_dataloader('train')
-    experiment.train(dataloader)
+    experiment.test(dataloader)
     print("Test Finished")
 
