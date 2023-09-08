@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 from tools.neural_network_utils import create_fully_connected
 from tools.utils import state_detach
-
+from numpy import exp
 
 def init_gru_parameters(gru_module):
     for name, param in gru_module.named_parameters():
@@ -27,28 +27,63 @@ class KalmanGainPredictor(nn.Module):
         self.init_h_Sigma = None
         self.init_h_S = None
         self.initialize_network()
+        self.initialize_covariance()
         self.initialize_parameters()
+    def initialize_covariance(self):
+        alpha = 0.1
+        tao = 5
+        sigma_a = 10
+        r = 10
+        R_corr = 0.5
+        x_p = 1e3
+        alpha_tao = alpha * tao
+        I = torch.eye(2)
+
+        q11 = (sigma_a ** 2) / (alpha ** 4) * (1 - exp(
+            -2 * alpha_tao) + 2 * alpha_tao + 2 / 3 * alpha_tao ** 3 - 2 * alpha_tao ** 2 - 4 * alpha_tao * exp(
+            -alpha_tao))
+        q12 = (sigma_a ** 2) / (alpha ** 3) * (exp(-2 * alpha_tao) + 1 - 2 * exp(-alpha_tao) + 2 * alpha_tao * exp(
+            -alpha_tao) - 2 * alpha_tao + alpha_tao ** 2)
+        q13 = (sigma_a ** 2) / (alpha ** 2) * \
+              (1 - exp(-2 * alpha_tao) - 2 * alpha_tao * exp(-alpha_tao))
+        q22 = (sigma_a ** 2) / (alpha ** 2) * \
+              (4 * exp(-alpha_tao) - 3 - exp(-2 * alpha_tao) + 2 * alpha_tao)
+        q23 = (sigma_a ** 2) / (alpha) * \
+              (exp(-2 * alpha_tao) + 1 - 2 * exp(-alpha_tao))
+        q33 = sigma_a ** 2 * (1 - exp(-2 * alpha_tao))
+        Q1 = torch.hstack((q11 * I, q12 * I, q13 * I))
+        Q2 = torch.hstack((q12 * I, q22 * I, q23 * I))
+        Q3 = torch.hstack((q13 * I, q23 * I, q33 * I))
+        Q_true = torch.vstack((Q1, Q2, Q3))
+        Q = Q_true.reshape(self.d_hidden_Q)
+
+        Sigma_true = torch.eye(self.output_dim)
+        Sigma = Sigma_true.reshape(self.d_hidden_Sigma)
+
+        R_true = R_corr * (r ** 2) * (torch.ones(self.input_dim) -
+                                      torch.eye(self.input_dim) + torch.eye(self.input_dim) / R_corr)
+        S = R_true.reshape(self.d_hidden_S)
+        self.init_h_Q = nn.Parameter(Q)
+        self.init_h_Sigma = nn.Parameter(torch.zeros(self.d_hidden_Sigma))
+        self.init_h_S = nn.Parameter(torch.zeros(self.d_hidden_S))
 
     def initialize_network(self):
         self.d_input_Q = self.output_dim * self.out_mult
         self.d_hidden_Q = self.output_dim ** 2
-        self.init_h_Q = nn.Parameter(torch.zeros(self.d_hidden_Q))
         self.GRU_Q = nn.GRUCell(self.d_input_Q, self.d_hidden_Q)
         self.FC_Q = nn.Sequential(nn.Linear(self.d_hidden_Q, self.d_hidden_Q),
                                   nn.ReLU())
         # GRU to track Sigma
         self.d_input_Sigma = self.d_hidden_Q + self.output_dim * self.out_mult
-        self.d_hidden_Sigma = self.input_dim ** 2
-        self.init_h_Sigma = nn.Parameter(torch.zeros(self.d_hidden_Sigma))
+        self.d_hidden_Sigma = self.output_dim ** 2
         self.GRU_Sigma = nn.GRUCell(self.d_input_Sigma, self.d_hidden_Sigma)
         self.FC_Sigma = nn.Sequential(nn.Linear(self.d_hidden_Sigma, self.d_hidden_Sigma),
                                       nn.ReLU())
         # GRU to track S
         self.d_input_S = self.output_dim ** 2 + 2 * self.input_dim * self.in_mult
-        self.d_hidden_S = self.output_dim ** 2 + 2 * self.input_dim * self.in_mult
-        self.init_h_S = nn.Parameter(torch.zeros(self.d_hidden_S))
+        self.d_hidden_S = self.input_dim ** 2
         self.GRU_S = nn.GRUCell(self.d_input_S, self.d_hidden_S)
-        self.FC_S = nn.Sequential(nn.Linear(self.d_input_S, self.d_hidden_S),
+        self.FC_S = nn.Sequential(nn.Linear(self.d_hidden_S, self.d_hidden_S),
                                   nn.ReLU())
         # Fully connected 1
         self.d_input_FC1 = self.d_hidden_Sigma

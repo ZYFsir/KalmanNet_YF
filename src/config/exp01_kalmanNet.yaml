@@ -1,15 +1,15 @@
 # experiments log
 experiment_name : 'exp01_kalmanNet'
-trial_name : '02'
+trial_name : '03'
 epoch : 3000
-checkpoint_name : 'KalmanNet_train_1.5814213848429706_epoch_2500.pt'
+checkpoint_name : 'KalmanNet_train_12.822893032109839_epoch_2540.pt'
 
 # deep model
 model_name: 'KalmanNet'
 target_state_dim : 6
 measurement_dim : 3
-in_mult : 20
-out_mult : 60
+in_mult : 50
+out_mult : 10
 
 # ssmodel
 observation_noise : 1000
@@ -17,7 +17,7 @@ init_state_mean : [[10000], [100000], [0], [0], [0], [0]]
 init_state_covariance_scaling : 1
 
 # train method
-learning_rate : 0.00001
+learning_rate : 0.001
 batch_size : 32
 optimizer_name: Adam
 backward_sequence_length : 150
