@@ -97,12 +97,16 @@ class Experiment:
 
     def train(self, dataloader):
         num_epochs = self.config.epoch
+        if self.config.use_scheduler is True:
+            self.scheduler = self.initialize_scheduler(self.optimizer, self.config.scheduler_name, num_epochs+1)
         with tqdm(range(self.experiment_start_epoch, num_epochs + 1), desc="Epochs", leave=True,total=num_epochs) as progess_bar:
             progess_bar.update(self.experiment_start_epoch)
             for epoch in range(self.experiment_start_epoch, num_epochs + 1):
                 # 一次训练，返回的loss尺寸未经任何压缩,[batchsize, T-length, xy]
                 loss = self.train_one_epoch(dataloader)
 
+                if self.config.use_scheduler is True:
+                    self.scheduler.step(loss)
                 # 记录结果
                 self.logger.add_scalar("MSE per epoch", loss, epoch)
 
@@ -316,3 +320,12 @@ class Experiment:
 
     def get_logger(self, path):
         return SummaryWriter(path)
+
+    def initialize_scheduler(self, optimizer, scheduler_name, total_epochs):
+        if scheduler_name == 'ReduceLROnPlateau':
+            from torch.optim.lr_scheduler import ReduceLROnPlateau
+            scheduler = ReduceLROnPlateau(optimizer,verbose=True)
+        else:
+            print("invalid scheduler name")
+            raise
+        return scheduler
