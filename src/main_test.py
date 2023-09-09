@@ -1,5 +1,5 @@
 import torch
-
+import os
 from src.tools.torchSettings import print_now_time
 from src.tools.Experiment import Experiment
 from src.config.config import Config
@@ -9,7 +9,7 @@ torch.set_printoptions(precision=12)
 
 if __name__ == "__main__":
     print_now_time()
-
+    os.chdir('..')
     config = Config('src/config/exp01_kalmanNet.yaml')
     experiment = Experiment(config)
     dataloader = experiment.get_dataloader('train')

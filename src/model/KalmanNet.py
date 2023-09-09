@@ -173,7 +173,8 @@ class KalmanNet(nn.Module):
         return normalized_input
 
     def normalize(self, tensor):
-        return func.normalize(tensor, p=2, dim=1, eps=1e-12, out=None)
+        # return func.normalize(tensor, p=2, dim=1, eps=1e-12, out=None)
+        return tensor
 
     # Innovation
     def innovation(self, y):

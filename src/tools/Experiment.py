@@ -135,50 +135,33 @@ class Experiment:
         datasize = get_datasize_from_dataloader(dataloader)
         batch_size = get_batchsize_from_dataloader(dataloader)
         with tqdm(range(datasize), desc="dataset", position=1) as data_progress_bar:
-            for data_i, batch in enumerate(dataloader):
-                batch = move_to_cuda(batch, self.device)
-                inputs, targets, station, h = batch
-                h = torch.Tensor(h).cuda()
-                inputs = inputs.transpose(1, 2).contiguous()
-                targets = targets.transpose(1, 2).contiguous()
-                batch_size = inputs.size(0)
+            with torch.no_grad():
+                for data_i, batch in enumerate(dataloader):
+                    batch = move_to_cuda(batch, self.device)
+                    inputs, targets, station, h = batch
+                    h = torch.Tensor(h).cuda()
+                    inputs = inputs.transpose(1, 2).contiguous()
+                    targets = targets.transpose(1, 2).contiguous()
+                    batch_size = inputs.size(0)
+                    hidden_in_states = None
 
-                self.optimizer.zero_grad()
-                accumulated_loss = 0
-                hidden_in_states = None
-                with torch.no_grad():
                     self.initialize_model_beliefs(batch_size)
 
-                hidden_list = []
-                hidden_list.append(hidden_in_states)
-                single_data_loss = 0
-                for t in range(0, inputs.size(2)):
-                    outputs, hidden_out_states = self.model(inputs[:, :, t:t + 1], hidden_in_states,
-                                                            station, h)
-                    hidden_list.append(hidden_out_states)
-                    loss = self.loss_function(outputs[:, 0:2, :], targets[:, :, t:t + 1])
-                    accumulated_loss = accumulated_loss + loss  # 此处不可用+=，因为inplace操作会影响计算图
-                    single_data_loss = single_data_loss + loss.item()
+                    hidden_list = []
+                    hidden_list.append(hidden_in_states)
+                    single_data_loss = 0
+                    output_sequence = torch.empty([batch_size, 2, inputs.size(2)])
+                    for t in range(0, inputs.size(2)):
+                        outputs, hidden_out_states = self.model(inputs[:, :, t:t + 1], hidden_in_states,
+                                                                station, h)
+                        hidden_in_states = hidden_out_states
+                        output_sequence[:,:,t:t+1] = outputs[:,0:2,:]
+                    loss = self.loss_function(output_sequence, targets)
+                    average_batch_loss = loss / (2 * batch_size * inputs.size(2))
+                    data_progress_bar.set_postfix({"loss": average_batch_loss})
+                    data_progress_bar.update(batch_size)
 
-                    if (t + 1) % self.config.backward_sequence_length == 0:
-                        # Perform a backward pass and update gradients every 10 time steps
-                        self.optimizer.zero_grad()
-                        accumulated_loss.backward()
-                        self.optimizer.step()
-                        accumulated_loss = 0
-                        hidden_in_states = state_detach(hidden_list[-1])
-                    else:
-                        hidden_in_states = hidden_list[-1]
-
-                # Perform a final backward pass and update gradients for any remaining accumulated loss
-                if accumulated_loss.item() > 0:
-                    self.optimizer.zero_grad()
-                    accumulated_loss.backward()
-                    self.optimizer.step()
-                average_single_data_loss = single_data_loss / (2 * batch_size * inputs.size(2))
-                data_progress_bar.set_postfix({"loss": average_single_data_loss})
-                data_progress_bar.update(batch_size)
-                total_loss = total_loss + average_single_data_loss
+                    total_loss += average_batch_loss
         return total_loss / (data_i + 1)
 
 
