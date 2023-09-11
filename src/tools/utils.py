@@ -9,13 +9,13 @@ def expand_to_batch(tensor_2d, batch_size):
 
     return tensor_3d
 
-def move_to_cuda(batch, device):
+def move_to_device(batch, device):
     if isinstance(batch, torch.Tensor):
         return batch.to(device)
     elif isinstance(batch, dict):
-        return {key: move_to_cuda(value, device) for key, value in batch.items()}
+        return {key: move_to_device(value, device) for key, value in batch.items()}
     elif isinstance(batch, (list, tuple)):
-        return [move_to_cuda(item, device) for item in batch]
+        return [move_to_device(item, device) for item in batch]
     else:
         return batch
 

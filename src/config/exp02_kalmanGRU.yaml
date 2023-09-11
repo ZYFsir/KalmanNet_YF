@@ -1,5 +1,5 @@
 # experiments log
-experiment_name : 'exp01_kalmanNet'
+experiment_name : 'exp02_kalmanGRU'
 trial_name : '03'
 epoch : 3000
 checkpoint_name : 'KalmanNet_train_89502.81069987721_epoch_10.pt'
@@ -11,19 +11,19 @@ measurement_dim : 3
 in_mult : 50
 out_mult : 10
 
-# maths_model
+# ss model
 observation_noise : 1000
 init_state_mean : [[10000], [100000], [0], [0], [0], [0]]
 init_state_covariance_scaling : 1
 
 # KG model
-kalman_gain_model : 'default'
+kalman_gain_model : 'EKF'
 
 # train method
-learning_rate : 0.01
-batch_size : 64
+learning_rate : 0.1
+batch_size : 32
 optimizer_name: Adam
-backward_sequence_length : 10
+backward_sequence_length : 150
 use_scheduler: true
 scheduler_name : 'ReduceLROnPlateau'
 

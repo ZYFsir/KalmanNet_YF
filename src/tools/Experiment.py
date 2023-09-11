@@ -11,7 +11,7 @@ from src.model.singer_EKF import init_SingerModel
 from src.model.EKF import ExtendedKalmanFilter
 from torch.utils.tensorboard import SummaryWriter
 from src.tools.TBPTT import TBPTT
-from src.tools.utils import expand_to_batch, move_to_cuda, state_detach
+from src.tools.utils import expand_to_batch, move_to_device, state_detach
 
 def exist_trial(trial_folder):
     model_folder = os.path.join(trial_folder, "model_backups")
@@ -80,6 +80,8 @@ class Experiment:
         if dataset_name in self.config.dataset:
             dataset = TDOADataset(self.config.dataset[dataset_name])
             dataloader = DataLoader(dataset, self.config.batch_size, num_workers=4)
+            dataloader.station = dataset.station
+            dataloader.h = dataset.h
             return dataloader
         else:
             print("dataset name invalid")
@@ -95,7 +97,9 @@ class Experiment:
         #    checkpoint_rewind["optimizer_state_dict"])
 
 
-    def train(self, dataloader):
+    def train(self, dataset_name):
+        dataloader = self.get_dataloader(dataset_name)
+
         num_epochs = self.config.epoch
         if self.config.use_scheduler is True:
             self.scheduler = self.initialize_scheduler(self.optimizer, self.config.scheduler_name, num_epochs+1)
@@ -112,13 +116,13 @@ class Experiment:
 
                 # 保存模型
                 if epoch % self.config.save_every_epoch == 0:
-                    self.save_checkpoint(dataloader, epoch, loss)
+                    self.save_checkpoint(epoch, loss)
 
                 # 更新进度条
                 progess_bar.update()
                 progess_bar.set_postfix({"loss":loss})
 
-    def save_checkpoint(self, dataloader, epoch_i, loss_train):
+    def save_checkpoint(self, epoch_i, loss_train):
         checkpoint_name = os.path.join(self.sub_folders["model_backups"], f"KalmanNet_train_{loss_train}_epoch_{epoch_i}.pt")
         checkpoint_content = {
             'epoch': epoch_i,
@@ -133,15 +137,14 @@ class Experiment:
         self.model.eval()
         total_loss = 0
         datasize = get_datasize_from_dataloader(dataloader)
-        batch_size = get_batchsize_from_dataloader(dataloader)
+        station = move_to_device(dataloader.station, self.device)
+        h = move_to_device(dataloader.h, self.device)
         with tqdm(range(datasize), desc="dataset", position=1) as data_progress_bar:
             with torch.no_grad():
                 for data_i, batch in enumerate(dataloader):
-                    batch = move_to_cuda(batch, self.device)
-                    inputs, targets, station, h = batch
-                    h = torch.Tensor(h).cuda()
-                    inputs = inputs.transpose(1, 2).contiguous()
-                    targets = targets.transpose(1, 2).contiguous()
+                    batch = move_to_device(batch, self.device)
+                    inputs, targets = batch
+
                     batch_size = inputs.size(0)
                     hidden_in_states = None
 
@@ -149,7 +152,6 @@ class Experiment:
 
                     hidden_list = []
                     hidden_list.append(hidden_in_states)
-                    single_data_loss = 0
                     output_sequence = torch.empty([batch_size, 2, inputs.size(2)])
                     for t in range(0, inputs.size(2)):
                         outputs, hidden_out_states = self.model(inputs[:, :, t:t + 1], hidden_in_states,
@@ -158,6 +160,7 @@ class Experiment:
                         output_sequence[:,:,t:t+1] = outputs[:,0:2,:]
                     loss = self.loss_function(output_sequence, targets)
                     average_batch_loss = loss / (2 * batch_size * inputs.size(2))
+
                     data_progress_bar.set_postfix({"loss": average_batch_loss})
                     data_progress_bar.update(batch_size)
 
@@ -171,14 +174,13 @@ class Experiment:
 
         total_loss = 0
         datasize = get_datasize_from_dataloader(dataloader)
-        batch_size = get_batchsize_from_dataloader(dataloader)
+        station = move_to_device(dataloader.station, self.device)
+        h = move_to_device(dataloader.h, self.device)
         with tqdm(range(datasize), desc="dataset", position=1) as data_progress_bar:
             for data_i, batch in enumerate(dataloader):
-                batch = move_to_cuda(batch, self.device)
-                inputs, targets, station, h = batch
-                h = torch.Tensor(h).cuda()
-                inputs = inputs.transpose(1, 2).contiguous()
-                targets = targets.transpose(1, 2).contiguous()
+                batch = move_to_device(batch, self.device)
+                inputs, targets = batch
+
                 batch_size = inputs.size(0)
 
                 self.optimizer.zero_grad()
@@ -279,7 +281,7 @@ class Experiment:
     def create_model_by_name(self, model_name):
         if model_name == "KalmanNet":
             model = KalmanNet(self.config.in_mult, self.config.out_mult,
-                              self.config.target_state_dim, self.config.measurement_dim, self.device)
+                              self.config.target_state_dim, self.config.measurement_dim, self.device, self.config.kalman_gain_model)
         else:
             print("model_name is invalid")
             raise

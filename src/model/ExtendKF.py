@@ -2,6 +2,7 @@ import torch
 from functorch import jacrev
 from torch import vmap
 from torch import autograd, nn
+from numpy import exp
 from src.model.kalman_gain.KalmanGainPredictor import KalmanGainPredictor
 from src.model.kalman_gain.KalmanGainPredictor_GRU import KalmanGainPredictor_GRU
 from src.model.kalman_gain.KalmanGain import KalmanGain
@@ -10,7 +11,7 @@ from src.model.maths_model.SingerMovementModel import SingerMovementModel
 from src.model.maths_model.TDOAMeasurementModel import TDOAMeasurementModel
 
 
-class KalmanNet(nn.Module):
+class EKF(nn.Module):
     """
     EKF中的SystemModel包含两项方程，而初始值、滤波中间值应当由滤波器进行保存。
     """
@@ -21,31 +22,13 @@ class KalmanNet(nn.Module):
     # 定义输入（测量值）为z，维度为m
     # 状态为x，维度为n
 
-    def __init__(self, in_mult, out_mult, m, n, device, kalman_gain_model):
+    def __init__(self):
         super().__init__()
-        self.y_previous = None
-        self.predicted_state_prior = None
-        self.predicted_measurement = None
-        self.filtered_state = None
-        self.filtered_state_previous_1_step = None
-        self.filtered_state_previous_2_step = None
-        self.predicted_state_prior_previous_1_step = None
 
-        self.state_dim = m
-        self.observation_dim = n
         self.state_mean = None
         self.state_covariance = None
 
-        self.device = device
-        if kalman_gain_model == 'default':
-            self.kalman_gain_predictor = KalmanGainPredictor(self.observation_dim, self.state_dim, in_mult, out_mult)
-        elif kalman_gain_model == 'GRU':
-            self.kalman_gain_predictor = KalmanGainPredictor_GRU(self.observation_dim,
-                                                                 1e3,
-                                                                 self.state_dim * self.observation_dim,
-                                                                 2)
-        elif kalman_gain_model == 'EKF':
-            self.kalman_gain_predictor = KalmanGain()
+        self.kalman_gain_predictor = KalmanGain()
         self.movement_model = SingerMovementModel()
         self.measurement_model = TDOAMeasurementModel()
 
@@ -53,20 +36,49 @@ class KalmanNet(nn.Module):
         self.state_mean = mean
         self.state_covariance = covariance
 
-        self.y_previous = None
-        self.predicted_state_prior = None
-        self.predicted_measurement = None
-        self.filtered_state = None
-        self.filtered_state_previous_1_step = None
-        self.filtered_state_previous_2_step = None
-        self.predicted_state_prior_previous_1_step = None
+    def initialize_covariance(self):
+        alpha = 0.1
+        tao = 5
+        sigma_a = 10
+        r = 10
+        R_corr = 0.5
+        x_p = 1e3
+        alpha_tao = alpha * tao
+        I = torch.eye(2)
 
+        q11 = (sigma_a ** 2) / (alpha ** 4) * (1 - exp(
+            -2 * alpha_tao) + 2 * alpha_tao + 2 / 3 * alpha_tao ** 3 - 2 * alpha_tao ** 2 - 4 * alpha_tao * exp(
+            -alpha_tao))
+        q12 = (sigma_a ** 2) / (alpha ** 3) * (exp(-2 * alpha_tao) + 1 - 2 * exp(-alpha_tao) + 2 * alpha_tao * exp(
+            -alpha_tao) - 2 * alpha_tao + alpha_tao ** 2)
+        q13 = (sigma_a ** 2) / (alpha ** 2) * \
+              (1 - exp(-2 * alpha_tao) - 2 * alpha_tao * exp(-alpha_tao))
+        q22 = (sigma_a ** 2) / (alpha ** 2) * \
+              (4 * exp(-alpha_tao) - 3 - exp(-2 * alpha_tao) + 2 * alpha_tao)
+        q23 = (sigma_a ** 2) / alpha * \
+              (exp(-2 * alpha_tao) + 1 - 2 * exp(-alpha_tao))
+        q33 = sigma_a ** 2 * (1 - exp(-2 * alpha_tao))
+        Q1 = torch.hstack((q11 * I, q12 * I, q13 * I))
+        Q2 = torch.hstack((q12 * I, q22 * I, q23 * I))
+        Q3 = torch.hstack((q13 * I, q23 * I, q33 * I))
+        Q_true = torch.vstack((Q1, Q2, Q3))
+        Q = Q_true.reshape(self.d_hidden_Q)
+
+        Sigma_true = torch.eye(self.output_dim)
+        Sigma = Sigma_true.reshape(self.d_hidden_Sigma)
+
+        R_true = R_corr * (r ** 2) * (torch.ones(self.input_dim) -
+                                      torch.eye(self.input_dim) + torch.eye(self.input_dim) / R_corr)
+        S = R_true.reshape(self.d_hidden_S)
+        self.init_h_Q = nn.Parameter(Q)
+        self.init_h_Sigma = nn.Parameter(torch.zeros(self.d_hidden_Sigma))
+        self.init_h_S = nn.Parameter(torch.zeros(self.d_hidden_S))
     def forward(self, observation, hidden_states, station, h):
         # Step 1: Prediction
-        self.predicted_state_prior, self.predicted_measurement = self.predict(self.state_mean, station, h)
+        self.predicted_state_prior, self.predicted_measurement, F, H = self.predict(self.state_mean, station, h)
 
         # Step 2: Kalman Gain Prediction
-        kalman_gain, updated_hidden_states = self.compute_kalman_gain(observation, hidden_states)
+        kalman_gain, updated_hidden_states = self.compute_kalman_gain(observation, F, H, )
         # Step 3: Measurement Innovation
         self.innovation(observation)
 
@@ -84,7 +96,10 @@ class KalmanNet(nn.Module):
     def predict(self, x_previous_t, station, h):
         x_prior = self.movement_model(x_previous_t)
         y_prior = self.measurement_model(x_prior, station, h)
-        return x_prior, y_prior
+
+        F = self.movement_model.get_jacobian(x_previous_t)
+        H = self.measurement_model.get_jacobian(x_prior, station, h)
+        return x_prior, y_prior, F, H
 
     def get_real_kalman_gain(self, m1x_real):
         m1x_real = m1x_real.unsqueeze(2)
@@ -98,7 +113,7 @@ class KalmanNet(nn.Module):
         return loss
 
     # Compute the Kalman Gain
-    def compute_kalman_gain(self, y, hidden_state):
+    def compute_kalman_gain(self, y, state_mean, station, h):
         # Construct network input
         network_input = self.construct_network_input(y)
 
@@ -115,27 +130,8 @@ class KalmanNet(nn.Module):
         return KG, new_hidden_state
 
     def construct_network_input(self, y):
-        if self.y_previous is None:
-            self.y_previous = y
-        if self.filtered_state_previous_1_step is None:
-            self.filtered_state_previous_1_step = self.state_mean
-        if self.predicted_state_prior_previous_1_step is None:
-            self.predicted_state_prior_previous_1_step = self.state_mean
-        if self.filtered_state_previous_2_step is None:
-            self.filtered_state_previous_2_step = self.state_mean
 
-        observation_difference = y - self.y_previous
-        observation_innovation_difference = y - self.predicted_measurement
-        filtered_state_evolution_difference = self.filtered_state_previous_1_step - self.filtered_state_previous_2_step
-        filtered_state_update_difference = (self.filtered_state_previous_1_step -
-                                            self.predicted_state_prior_previous_1_step)
 
-        return (
-            observation_difference,
-            observation_innovation_difference,
-            filtered_state_evolution_difference,
-            filtered_state_update_difference
-        )
 
     def normalize_network_input(self, network_input):
         normalized_input = [self.normalize(tensor) for tensor in network_input]

@@ -11,15 +11,15 @@ def file_filter(f):
 class TDOADataset(Dataset):
     def __init__(self, path):
         data = torch.load(path)
-        self.x = data["input"]
-        self.y = data["target"]
+        self.x = data["input"].transpose(1, 2).contiguous()
+        self.y = data["target"].transpose(1, 2).contiguous()
         self.station = data["station"]
-        self.h = data["h"]
+        self.h = data["h"].reshape([1,1])
         self.N, self.T,self.x_dim = self.x.shape
         self.y_dim = self.y.shape[-1]
 
     def __getitem__(self, item):
-        return (self.x[item, :, :], self.y[item, :, :], self.station, self.h)
+        return (self.x[item, :, :], self.y[item, :, :])
 
     def __len__(self):
         return self.N

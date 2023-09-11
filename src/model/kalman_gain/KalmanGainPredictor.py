@@ -64,8 +64,8 @@ class KalmanGainPredictor(nn.Module):
                                       torch.eye(self.input_dim) + torch.eye(self.input_dim) / R_corr)
         S = R_true.reshape(self.d_hidden_S)
         self.init_h_Q = nn.Parameter(Q)
-        self.init_h_Sigma = nn.Parameter(torch.zeros(self.d_hidden_Sigma))
-        self.init_h_S = nn.Parameter(torch.zeros(self.d_hidden_S))
+        self.init_h_Sigma = nn.Parameter(torch.Tensor(Sigma))
+        self.init_h_S = nn.Parameter(torch.Tensor(S))
 
     def initialize_network(self):
         self.d_input_Q = self.output_dim * self.out_mult

@@ -12,7 +12,7 @@ if __name__ == "__main__":
     os.chdir('..')
     config = Config('src/config/exp01_kalmanNet.yaml')
     experiment = Experiment(config)
-    dataloader = experiment.get_dataloader('train')
-    experiment.train(dataloader)
+    dataset_name = 'train'
+    experiment.train(dataset_name)
     print("Training Finished")
 

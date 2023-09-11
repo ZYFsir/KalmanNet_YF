@@ -10,9 +10,9 @@ torch.set_printoptions(precision=12)
 if __name__ == "__main__":
     print_now_time()
     os.chdir('..')
-    config = Config('src/config/exp01_kalmanNet.yaml')
+    config = Config('src/config/exp02_kalmanGRU.yaml')
     experiment = Experiment(config)
-    dataloader = experiment.get_dataloader('train')
-    experiment.test(dataloader)
+    dataset_name = 'train'
+    experiment.test(dataset_name)
     print("Test Finished")
 
